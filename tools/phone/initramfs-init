@@ -11,9 +11,10 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
+SPLASH_MSG=/dev/.vortex-splash.msg   # /dev survives switch_root
+
 log() {
 	echo "vortex-init: $*" > /dev/kmsg
-	echo "vortex: $*" > /dev/tty0 2>/dev/null
 	[ -c /dev/ttyGS0 ] && echo "vortex-init: $*" > /dev/ttyGS0 2>/dev/null
 }
 
@@ -46,6 +47,7 @@ usb_serial() {
 
 rescue() {
 	log "$*"
+	echo "Boot problem: $* (USB console: screen /dev/ttyACM0)" > "$SPLASH_MSG"
 	log "dropping to a shell on the USB serial console"
 	umount /sys/kernel/config 2>/dev/null
 	if [ -c /dev/ttyGS0 ]; then
@@ -56,7 +58,10 @@ rescue() {
 }
 
 load_modules
-sleep 1                             # let the panel driver bind and fbcon take over
+# Boot logo as soon as the panel is up.
+i=0
+while [ $i -lt 30 ] && [ ! -c /dev/fb0 ]; do sleep 0.1; i=$((i + 1)); done
+[ -c /dev/fb0 ] && /bin/vortex-splash -m "$SPLASH_MSG" -p /dev/.vortex-splash.pid &
 log "starting (initramfs)"
 usb_serial && log "USB serial console up" || echo "vortex-init: no USB serial console" > /dev/kmsg
 log "kernel $(uname -r), waiting for the 'vortex' partition"

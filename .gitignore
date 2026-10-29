@@ -7,3 +7,5 @@ work/
 *.o
 node_modules/
 downloads/
+shell/vortex-splash
+adbd/vortex-adbd
