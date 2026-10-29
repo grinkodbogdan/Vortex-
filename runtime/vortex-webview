@@ -14,6 +14,7 @@ import sys
 
 import gi
 
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2  # noqa: E402
@@ -97,7 +98,20 @@ def hide_cursor(widget):
 
 view.connect("realize", hide_cursor)
 view.connect("close", lambda *_: Gtk.main_quit())  # window.close() quits, as with Cog
-view.connect("web-process-terminated", lambda *_: Gtk.main_quit())  # --webprocess-failure=exit
+def web_process_terminated(_view, reason):
+    # --webprocess-failure=exit; say why, or a crash looks like a clean exit
+    print("vortex-webview: web process terminated: %s" % reason.value_nick, file=sys.stderr, flush=True)
+    Gtk.main_quit()
+    sys.exit(3)
+
+
+def load_failed(_view, _event, uri, error):
+    print("vortex-webview: loading %s failed: %s" % (uri, error.message), file=sys.stderr, flush=True)
+    return False
+
+
+view.connect("web-process-terminated", web_process_terminated)
+view.connect("load-failed", load_failed)
 view.load_uri(url)
 window.show_all()
 window.fullscreen()
