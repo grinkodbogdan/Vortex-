@@ -32,6 +32,7 @@ screen, T9 keypad) is the primary target.
 | WPE WebKit and Cog packages for Void | Templates written, not built yet. |
 | Root filesystem and SD card image scripts | Written, not run on a phone yet. |
 | Kernel (msm8916-mainline + postmarketOS config) | Build script written, not booted yet. |
+| x86_64 VM build (QEMU) | Boots. Store → install → run → close tested end to end with BankiTube. |
 | Calls and SMS | Experimental: a dialer UI plus an oFono helper. No incoming calls, no call audio routing. |
 
 Nothing here has booted on a real 6300 4G yet. The known open problems are
@@ -88,6 +89,7 @@ docs/        architecture, memory budget, device notes, KaiOS app compatibility
 * [Memory budget](docs/memory.md): where the 10–15 MB goes, and how it is measured
 * [KaiOS apps](docs/kaios-apps.md): which apps work and what the shim provides
 * [Nokia 6300 4G](docs/device-nokia-6300-4g.md): bring-up, flashing and open problems
+* [VM](docs/vm.md): run Vortex in QEMU, and the end-to-end store/app test (BankiTube results)
 
 ## Third-party code
 

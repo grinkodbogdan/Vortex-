@@ -8,6 +8,7 @@ runit-void
 musl
 coreutils
 findutils
+diffutils
 grep
 sed
 gawk

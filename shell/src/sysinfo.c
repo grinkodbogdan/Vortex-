@@ -77,6 +77,20 @@ void sys_update(struct vx_sys *s)
     long carrier;
     battery(s);
     s->wifi_up = vx_read_int("/sys/class/net/wlan0/carrier", &carrier) == 0 && carrier == 1;
+    s->net_up = s->wifi_up;
+    if (!s->net_up) {
+        DIR *d = opendir("/sys/class/net");
+        struct dirent *e;
+        while (d && (e = readdir(d)) && !s->net_up) {
+            char path[300];
+            if (e->d_name[0] == '.' || !strcmp(e->d_name, "lo"))
+                continue;
+            snprintf(path, sizeof(path), "/sys/class/net/%s/carrier", e->d_name);
+            s->net_up = vx_read_int(path, &carrier) == 0 && carrier == 1;
+        }
+        if (d)
+            closedir(d);
+    }
     sys_update_mem(s);
     if (sysinfo(&si) == 0)
         s->uptime_s = si.uptime;

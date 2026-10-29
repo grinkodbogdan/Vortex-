@@ -203,7 +203,7 @@ static void status_bar(void)
 
     /* Wi-Fi signal bars */
     for (int i = 0; i < 4; i++)
-        fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.wifi_up ? T.cyan : 0x2a3444);
+        fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.net_up ? T.cyan : 0x2a3444);
     if (S->job != JOB_NONE || S->store.fetch_pid > 0)
         label(nk_rect(26, 0, 14, SB_H), "\xe2\x86\x93", f, T.cyan, AL_LEFT); /* activity */
 
@@ -728,8 +728,8 @@ static void draw_home(void)
           S->sys.mem_total_kb ? (int)(used * 100 * 1024 / S->sys.mem_total_kb) : 0, T.accent);
     ry += 26;
     label(nk_rect(18, ry, 70, 16), "Network", S->fonts.small, T.cyan, AL_LEFT);
-    label(nk_rect(90, ry, w - 108, 16), S->sys.wifi_up ? "Wi-Fi connected" : "Offline", S->fonts.small,
-          S->sys.wifi_up ? T.text : T.dim, AL_LEFT);
+    label(nk_rect(90, ry, w - 108, 16), S->sys.wifi_up ? "Wi-Fi connected" : S->sys.net_up ? "Connected" : "Offline",
+          S->fonts.small, S->sys.net_up ? T.text : T.dim, AL_LEFT);
     ry += 26;
     label(nk_rect(18, ry, 70, 16), "Uptime", S->fonts.small, T.cyan, AL_LEFT);
     snprintf(v, sizeof(v), "%ldh %02ldm", S->sys.uptime_s / 3600, S->sys.uptime_s / 60 % 60);
@@ -815,7 +815,7 @@ static void draw_store(void)
         label(nk_rect(10, area.y + 30, area.w - 20, 24), "Store unavailable", S->fonts.large, T.text, AL_CENTER);
         label(nk_rect(10, area.y + 60, area.w - 20, 20), st->error[0] ? st->error : "No data yet",
               S->fonts.small, T.dim, AL_CENTER);
-        label(nk_rect(10, area.y + 84, area.w - 20, 20), "Connect to Wi-Fi and press Refresh",
+        label(nk_rect(10, area.y + 84, area.w - 20, 20), "Retrying automatically when online\xe2\x80\xa6",
               S->fonts.small, T.dim, AL_CENTER);
         softkeys("Refresh", NULL, "Back");
         return;
@@ -996,7 +996,7 @@ static void draw_sysinfo(void)
     ROW("Shell", "%ld KB RSS", S->sys.self_rss_kb);
     if (S->sys.battery >= 0)
         ROW("Battery", "%d%%%s", S->sys.battery, S->sys.charging ? " charging" : "");
-    ROW("Network", "%s", S->sys.wifi_up ? "Wi-Fi connected" : "offline");
+    ROW("Network", "%s", S->sys.wifi_up ? "Wi-Fi connected" : S->sys.net_up ? "connected" : "offline");
     ROW("Apps", "%d installed", S->apps.count - 4);
     ROW("Vortex", "%s", VORTEX_VERSION);
 #undef ROW
@@ -1076,6 +1076,11 @@ static void draw_menu(void)
 
 static void draw_screen(enum screen scr)
 {
+    /* never draw store records that are not loaded */
+    if ((scr == SCR_STORE_LIST || scr == SCR_STORE_DETAIL) && S->store.state != STORE_READY)
+        scr = SCR_STORE;
+    if (scr == SCR_STORE_DETAIL && S->detail_app >= S->store.n_apps)
+        scr = SCR_STORE;
     switch (scr) {
     case SCR_HOME: draw_home(); break;
     case SCR_LAUNCHER: draw_launcher(); break;
@@ -1493,6 +1498,12 @@ int shell_tick(struct shell *sh)
             sh->force_redraw = 1;
             sh->last_input = sh->now;
             apps_scan(&sh->apps, sh->cfg.apps_dir);
+            /* The store records were dropped to make room for the app;
+             * bring them back if a store screen is on the stack (same
+             * cache file, so the saved indices stay valid). */
+            if (sh->store.state != STORE_READY && store_load_cache(&sh->store) != 0)
+                while (sh->depth > 1 && (top() == SCR_STORE_LIST || top() == SCR_STORE_DETAIL))
+                    pop();
             return 1;
         }
         return 0;
@@ -1503,6 +1514,18 @@ int shell_tick(struct shell *sh)
         dirty = 1; /* spinner */
     }
     reap_detached();
+    /* Store failed to download (e.g. opened before the network was up):
+     * retry by itself every few seconds while its screen is showing and a
+     * link is up. */
+    if (top() == SCR_STORE && sh->store.state == STORE_ERROR && sh->store.fetch_pid <= 0) {
+        static long last_retry;
+        if (sh->now - last_retry > 5000) {
+            last_retry = sh->now;
+            sys_update(&sh->sys);
+            if (sh->sys.net_up && store_refresh(&sh->store) == 0)
+                dirty = 1;
+        }
+    }
     if (store_poll(&sh->store)) {
         if (sh->store.error[0] && sh->store.state == STORE_READY)
             toast(sh->store.error);
@@ -1545,6 +1568,8 @@ int shell_timeout(const struct shell *sh)
         return 250;
     if (sh->job != JOB_NONE || sh->store.fetch_pid > 0)
         return 120;
+    if (sh->stack[sh->depth - 1] == SCR_STORE && sh->store.state == STORE_ERROR)
+        return 5000; /* automatic store retry */
     if (sh->t9.pending_key)
         return T9_COMMIT_MS / 3;
     if (sh->toast[0] || sh->end_down_at >= 0)

@@ -36,6 +36,12 @@ Mozilla/B2G-specific APIs and the key handling.
 `runtime/tests/shim-test.js` checks the shim in Chromium: key mapping,
 Backspace-to-exit and the API stubs.
 
+## Apps tested
+
+| App | Where | Result |
+|---|---|---|
+| BankiTube (YouTube via Invidious) | VM, 2026-10-29 | Installs, launches, renders, keys work. Search fails because every public Invidious API is down or behind anti-bot checks; the app fails the same way on KaiOS. See [vm.md](vm.md). |
+
 ## What works and what doesn't
 
 The store labels each app with a **type**. Vortex shows a warning on the app

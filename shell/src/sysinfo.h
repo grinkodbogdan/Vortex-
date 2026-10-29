@@ -5,6 +5,7 @@ struct vx_sys {
     int battery;        /* percent, -1 unknown */
     int charging;
     int wifi_up;
+    int net_up;         /* any interface but lo has a link */
     long mem_total_kb, mem_avail_kb;
     long self_rss_kb;
     long uptime_s;

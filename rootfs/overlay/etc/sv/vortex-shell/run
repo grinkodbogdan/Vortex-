@@ -4,6 +4,11 @@ exec 2>&1
 [ -d /var/lib/vortex/apps ] || install -d -o vortex -g vortex /var/lib/vortex/apps /var/lib/vortex/data
 [ -d /var/cache/vortex ] || install -d -o vortex -g vortex /var/cache/vortex
 # The shell is the last thing that should be OOM-killed.
-echo -900 > /proc/self/oom_score_adj
+printf %s -900 > /proc/self/oom_score_adj
 export HOME=/var/lib/vortex PATH=/usr/bin:/usr/sbin:/usr/libexec/vortex
-exec chpst -u vortex:vortex:video:input:audio vortex-shell
+# site-specific environment (e.g. a proxy), if any
+[ -r /etc/vortex/env ] && . /etc/vortex/env
+# _seatd lets web apps run a Wayland compositor where seatd is used (VM)
+G=vortex:vortex:video:input:audio
+getent group _seatd >/dev/null 2>&1 && G=$G:_seatd
+exec chpst -u "$G" vortex-shell

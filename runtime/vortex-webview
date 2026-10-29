@@ -1,0 +1,104 @@
+#!/usr/bin/python3
+# WebKitGTK stand-in for Cog, for running Vortex in an x86 VM or on a PC
+# (Void ships WebKitGTK but not WPE).  Accepts the options vortex-kai-run
+# passes to Cog and ignores the Cog-only ones:
+#
+#   vortex-webview --dir-handler=app:/var/lib/vortex/apps/ID \
+#       --disable-web-security=true --user-agent=UA ... app://ID/index.html
+#
+# Run it inside a Wayland kiosk compositor (see vortex-webview-cage).
+# Set VORTEX_PROXY=http://host:port to route web traffic through a proxy.
+import mimetypes
+import os
+import sys
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("WebKit2", "4.1")
+from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2  # noqa: E402
+
+opts = {}
+url = None
+for arg in sys.argv[1:]:
+    if arg.startswith("--"):
+        key, _, value = arg[2:].partition("=")
+        opts.setdefault(key, []).append(value)
+    else:
+        url = arg
+if not url:
+    sys.exit("usage: vortex-webview [cog options] URL")
+
+data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+cache = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+manager = WebKit2.WebsiteDataManager(
+    base_data_directory=os.path.join(data, "webkit"),
+    base_cache_directory=os.path.join(cache, "webkit"),
+)
+proxy = os.environ.get("VORTEX_PROXY")
+if proxy:
+    manager.set_network_proxy_settings(
+        WebKit2.NetworkProxyMode.CUSTOM,
+        WebKit2.NetworkProxySettings.new(proxy, ["localhost", "127.0.0.1"]),
+    )
+context = WebKit2.WebContext.new_with_website_data_manager(manager)
+
+# --dir-handler=SCHEME:DIR, like Cog's: serve DIR as SCHEME://anything/
+for spec in opts.get("dir-handler", []):
+    scheme, _, root = spec.partition(":")
+    root = os.path.realpath(root)
+
+    def serve(request, root=root):
+        path = os.path.realpath(os.path.join(root, request.get_path().lstrip("/")))
+        if os.path.isdir(path):
+            path = os.path.join(path, "index.html")
+        if not (path == root or path.startswith(root + os.sep)) or not os.path.isfile(path):
+            request.finish_error(GLib.Error.new_literal(Gio.io_error_quark(), "not found", Gio.IOErrorEnum.NOT_FOUND))
+            return
+        with open(path, "rb") as f:
+            body = f.read()
+        mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        if path.endswith(".webapp"):
+            mime = "application/json"
+        stream = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(body))
+        request.finish(stream, len(body), mime)
+
+    context.register_uri_scheme(scheme, serve)
+    security = context.get_security_manager()
+    security.register_uri_scheme_as_secure(scheme)
+    security.register_uri_scheme_as_cors_enabled(scheme)
+
+settings = WebKit2.Settings()
+settings.set_enable_developer_extras(False)
+settings.set_media_playback_requires_user_gesture(False)
+if opts.get("disable-web-security", ["false"])[-1] == "true":
+    settings.set_property("disable-web-security", True)
+if "user-agent" in opts:
+    settings.set_user_agent(opts["user-agent"][-1])
+
+content = WebKit2.UserContentManager()
+# phones have no pointer: let WebKit itself ask for no cursor
+content.add_style_sheet(WebKit2.UserStyleSheet(
+    "* { cursor: none !important; }",
+    WebKit2.UserContentInjectedFrames.ALL_FRAMES,
+    WebKit2.UserStyleLevel.USER, None, None))
+view = WebKit2.WebView(web_context=context, settings=settings, user_content_manager=content)
+window = Gtk.Window()
+window.set_decorated(False)  # no title bar: the app owns the whole screen
+window.add(view)
+window.connect("destroy", Gtk.main_quit)
+
+
+def hide_cursor(widget):
+    # phones have no pointer
+    gdk_window = widget.get_window()
+    gdk_window.set_cursor(Gdk.Cursor.new_for_display(gdk_window.get_display(), Gdk.CursorType.BLANK_CURSOR))
+
+
+view.connect("realize", hide_cursor)
+view.connect("close", lambda *_: Gtk.main_quit())  # window.close() quits, as with Cog
+view.connect("web-process-terminated", lambda *_: Gtk.main_quit())  # --webprocess-failure=exit
+view.load_uri(url)
+window.show_all()
+window.fullscreen()
+Gtk.main()

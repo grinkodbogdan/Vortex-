@@ -20,10 +20,16 @@ store_url = file://$(pwd)/tests/fixtures/store.json
 screen_timeout = 0
 CONF
 
+# Second config whose apps dir has the store app "10000h" installed, for
+# opening an app from its store page.
+mkdir -p "$OUT/apps2"
+cp -r tests/fixtures/apps/hello "$OUT/apps2/10000h"
+sed "s|apps_dir = .*|apps_dir = $(pwd)/$OUT/apps2|" "$OUT/vortex.conf" > "$OUT/vortex2.conf"
+
 fail=0
 run() {
 	name=$1; shift
-	if ./vortex-shell-headless -c "$OUT/vortex.conf" -k /dev/null --script "$*" 2>"$OUT/$name.log"; then
+	if ./vortex-shell-headless -c "${CONF:-$OUT/vortex.conf}" -k /dev/null --script "$*" 2>"$OUT/$name.log"; then
 		echo "ok   $name"
 	else
 		echo "FAIL $name"; cat "$OUT/$name.log"; fail=1
@@ -39,6 +45,17 @@ run settings   "soft_right right right shot:$OUT/settings.ppm"
 run sysinfo    "soft_right up up ok shot:$OUT/sysinfo.ppm"
 run dialer     "1 2 3 shot:$OUT/dialer.ppm"
 run power      "hold:end shot:$OUT/power.ppm"
+# the store retries by itself after a failed download: the database only
+# appears 2 s after the store is opened (like the network coming up late)
+mkdir -p "$OUT/cache3"
+sed -e "s|cache_dir = .*|cache_dir = $(pwd)/$OUT/cache3|" \
+    -e "s|store_url = .*|store_url = file://$(pwd)/$OUT/late.json|" "$OUT/vortex.conf" > "$OUT/vortex3.conf"
+(sleep 2; cp tests/fixtures/store.json "$OUT/late.json") &
+CONF=$OUT/vortex3.conf run store-retry "soft_left wait:400 shot:$OUT/store-error.ppm wait:6000 wait:600 wait:600 shot:$OUT/store-retried.ppm"
+
+# regression: the store is unloaded while an app runs; returning to the
+# store page afterwards must not touch freed records
+CONF=$OUT/vortex2.conf run store-open "soft_left down ok ok soft_left wait:1500 wait:300 shot:$OUT/store-after-app.ppm"
 run options    "ok right right right right soft_left shot:$OUT/options.ppm down ok shot:$OUT/confirm.ppm"
 
 # every screenshot must exist and not be blank

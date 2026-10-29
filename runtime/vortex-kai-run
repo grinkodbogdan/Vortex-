@@ -33,7 +33,7 @@ LAUNCH=$(tr -d '\r\n' < "$APPDIR/manifest.webapp" |
 case $LAUNCH in /*) ;; *) LAUNCH=/$LAUNCH ;; esac
 
 # Keep the shim current across Vortex updates.
-if [ -r "$VORTEX_SHIM" ] && ! cmp -s "$VORTEX_SHIM" "$APPDIR/vortex-kaios-shim.js"; then
+if [ -r "$VORTEX_SHIM" ] && ! cmp -s "$VORTEX_SHIM" "$APPDIR/vortex-kaios-shim.js" 2>/dev/null; then
 	cp "$VORTEX_SHIM" "$APPDIR/vortex-kaios-shim.js" 2>/dev/null || true
 fi
 
@@ -48,7 +48,7 @@ export Malloc=1
 export COG_PLATFORM_DRM_VIDEO_MODE=${COG_PLATFORM_DRM_VIDEO_MODE:-240x320}
 
 # Let the kernel reclaim the web app before the shell or system services.
-echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
+printf %s 500 > /proc/self/oom_score_adj 2>/dev/null || true
 
 # shellcheck disable=SC2086 # VORTEX_EXTRA_ARGS is a word list on purpose
 exec "$VORTEX_WEB_ENGINE" \
