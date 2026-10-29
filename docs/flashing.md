@@ -20,9 +20,14 @@
 The boot image's initramfs mounts whichever partition is labelled
 `vortex`, so the root filesystem can live on the SD card or in `userdata`.
 
-The kernel is postmarketOS' `linux-postmarketos-qcom-msm8916` 6.12.1, which
-covers MSM8909, with the `qcom-msm8909-nokia-leo` device tree. The bootloader
-is postmarketOS' prebuilt `lk2nd-msm8916` 23.1.
+The kernel is postmarketOS v24.06's `linux-postmarketos-qcom-msm8916` 6.6,
+which covers MSM8909, with the `qcom-msm8909-nokia-leo` device tree. Kernels
+6.11 and later leave this phone's panel dark. The bootloader is lk2nd's
+official `msm8909` build (23.1), which knows the 6300 4G (`nokia,leo`).
+
+> alpha1 used the wrong lk2nd (`msm8916`). On the 6300 4G it does not start,
+> and the phone falls back to Nokia's locked fastboot (`fastboot boot` then
+> answers "unknown command"). Re-flash `boot` from alpha2 or later over EDL.
 
 ## You need
 

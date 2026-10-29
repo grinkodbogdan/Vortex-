@@ -12,7 +12,8 @@
 #   - vortex-shell is cross-compiled with clang against a Void musl sysroot.
 #   - The panel init firmware is compiled with tools/phone/mipi-dbi-fw.py.
 #
-# Needs (host): root, curl, tar, clang + lld, make, python3.
+# Needs (host): root, curl, tar, clang + lld, make, python3, and
+# LK2ND_IMG=path/to/lk2nd.img from lk2nd's msm8909 release.
 # Output: OUTDIR/rootfs/ and OUTDIR/kernel/ (zImage, dtbs, modules).
 set -eu
 
@@ -33,11 +34,15 @@ K=$OUT/kernel
 export XBPS_ARCH=armv7l-musl
 
 # Pinned inputs
-PMOS=https://mirror.postmarketos.org/postmarketos/master/armv7
-KPKG=linux-postmarketos-qcom-msm8916-6.12.1-r7
-KVER=6.12.1-msm8916
-LK2ND=lk2nd-msm8916-23.1-r0
-GPUFW=firmware-qcom-adreno-a300-20260110-r1
+# Kernel 6.6 from postmarketOS v24.06: on the 6300 4G / 8000 4G the panel
+# stays dark with kernels 6.11 and later (postmarketOS wiki).
+PMOS=https://mirror.postmarketos.org/postmarketos
+KPKG=v24.06/linux-postmarketos-qcom-msm8916-6.6-r5
+GPUFW=master/firmware-qcom-adreno-a300-20260110-r1
+# The bootloader is lk2nd's own msm8909 build (it knows nokia,leo), from
+# https://github.com/msm8916-mainline/lk2nd/releases.  postmarketOS'
+# lk2nd-msm8916 package does NOT start on this phone.
+LK2ND_IMG=${LK2ND_IMG:-}
 PMAPORTS=690ccca91f4b5d60bd9e306f8449cd80e3daf682
 PANEL=nokia,leo-gc9305-hlt-24-panel
 DTB=qcom-msm8909-nokia-leo.dtb
@@ -45,6 +50,7 @@ DTB=qcom-msm8909-nokia-leo.dtb
 msg() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "run as root (file ownership in the image)"
+[ -f "$LK2ND_IMG" ] || die "set LK2ND_IMG to lk2nd-msm8909's lk2nd.img (github.com/msm8916-mainline/lk2nd/releases)"
 mkdir -p "$OUT"
 
 # ------------------------------------------------------------------ xbps
@@ -74,20 +80,27 @@ xbps_unpack "$ROOT" $(sed 's/#.*//' "$HERE/packages.txt")
 msg "fetching postmarketOS kernel, lk2nd and GPU firmware"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-for p in $KPKG $LK2ND $GPUFW; do
-	curl -fsSL -o "$T/$p.apk" "$PMOS/$p.apk"
-	mkdir -p "$T/$p"
-	tar -xzf "$T/$p.apk" -C "$T/$p" --ignore-zeros 2>/dev/null || true
+for p in $KPKG $GPUFW; do
+	n=${p##*/}
+	curl -fsSL -o "$T/$n.apk" "$PMOS/${p%%/*}/armv7/$n.apk"
+	mkdir -p "$T/$n"
+	tar -xzf "$T/$n.apk" -C "$T/$n" --ignore-zeros 2>/dev/null || true
 done
+KPKG=${KPKG##*/}
+GPUFW=${GPUFW##*/}
+# modules live in /lib/modules (older packages) or /usr/lib/modules
+KMOD=$(ls -d "$T/$KPKG"/usr/lib/modules/* "$T/$KPKG"/lib/modules/* 2>/dev/null | head -n 1)
+KVER=${KMOD##*/}
+[ -n "$KVER" ] || die "no modules in the kernel package"
 rm -rf "$K"
 mkdir -p "$K/dtbs"
 cp "$T/$KPKG/boot/vmlinuz" "$K/zImage"
 cp "$T/$KPKG/boot/dtbs/$DTB" "$K/dtbs/"
 cp "$T/$KPKG/boot/config" "$K/config"
 echo "$KVER" > "$K/kernel.release"
-cp "$T/$LK2ND/boot/lk2nd.img" "$K/lk2nd.img"
+cp "$LK2ND_IMG" "$K/lk2nd.img"
 mkdir -p "$ROOT/usr/lib/modules"
-cp -a "$T/$KPKG/usr/lib/modules/$KVER" "$ROOT/usr/lib/modules/"
+cp -a "$KMOD" "$ROOT/usr/lib/modules/"
 cp -a "$T/$GPUFW/usr/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null ||
 	cp -a "$T/$GPUFW/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null || true
 

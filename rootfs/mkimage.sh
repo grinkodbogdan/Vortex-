@@ -55,8 +55,8 @@ install -m755 "$TOP/tools/phone/initramfs-init" "$I/init"
 # USB serial console modules (busybox insmod wants them uncompressed)
 mkdir -p "$I/lib/modules"
 for m in gadget/libcomposite gadget/function/u_serial gadget/function/usb_f_acm; do
-	zstd -qdc "$ROOT/usr/lib/modules/$(cat "$K/kernel.release")/kernel/drivers/usb/$m.ko.zst" \
-		> "$I/lib/modules/${m##*/}.ko"
+	f=$ROOT/usr/lib/modules/$(cat "$K/kernel.release")/kernel/drivers/usb/$m.ko
+	if [ -f "$f.zst" ]; then zstd -qdc "$f.zst" > "$I/lib/modules/${m##*/}.ko"; else cp "$f" "$I/lib/modules/"; fi
 done
 python3 "$TOP/tools/phone/mkcpio.py" "$I" "$T/initramfs.gz"
 

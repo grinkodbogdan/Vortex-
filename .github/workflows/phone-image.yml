@@ -25,8 +25,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang lld android-sdk-libsparse-utils fdisk e2fsprogs xz-utils python3 zstd
 
+      - name: Fetch lk2nd for MSM8909 (official release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LK2ND_TAG: "23.1"
+        run: |
+          gh release view "$LK2ND_TAG" -R msm8916-mainline/lk2nd --json assets -q '.assets[].name'
+          mkdir -p lk2nd-dl
+          gh release download "$LK2ND_TAG" -R msm8916-mainline/lk2nd -p '*msm8909*' -D lk2nd-dl
+          for z in lk2nd-dl/*.zip; do [ -e "$z" ] && unzip -o "$z" -d lk2nd-dl; done
+          ls -laR lk2nd-dl
+          img=$(find lk2nd-dl -name '*.img' | head -n 1)
+          test -n "$img"
+          echo "LK2ND_IMG=$PWD/$img" >> "$GITHUB_ENV"
+
       - name: Build root filesystem (Void armv7l-musl + postmarketOS kernel)
-        run: sudo MIRROR=https://repo-de.voidlinux.org rootfs/build.sh
+        run: sudo LK2ND_IMG="$LK2ND_IMG" MIRROR=https://repo-de.voidlinux.org rootfs/build.sh
 
       - name: Make images
         run: sudo rootfs/mkimage.sh
@@ -56,7 +70,9 @@ jobs:
           | `vortex-sdcard.img.xz` | or a microSD card (`unxz`, then write to the card); then only `boot` changes |
           | `lk2nd.img`, `vortex-boot.img`, `vortex-rootfs.simg.xz` | the same pieces for lk2nd fastboot |
 
-          Kernel: postmarketOS linux-postmarketos-qcom-msm8916 6.12.1 (MSM8909, nokia-leo device tree). Bootloader: postmarketOS lk2nd-msm8916 23.1. The first boot takes several minutes (package setup).
+          Kernel: postmarketOS v24.06 linux-postmarketos-qcom-msm8916 6.6 (the panel stays dark on 6.11+), nokia-leo device tree. Bootloader: lk2nd-msm8909 23.1 (official release). The first boot takes several minutes (package setup, shown on screen).
+
+          **Debugging:** a USB serial console shows the boot and gives a root shell: `screen /dev/ttyACM0 115200` on the PC.
           EOF
           gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
             --title "Vortex $TAG for Nokia 6300 4G (experimental)" --notes-file notes.md \
