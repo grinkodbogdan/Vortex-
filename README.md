@@ -4,8 +4,9 @@ Vortex is a Void Linux based distribution for KaiOS-class feature phones. The
 Nokia 6300 4G (`nokia-leo`, Snapdragon 210 / MSM8909, 512 MB RAM, 240×320
 screen, T9 keypad) is the primary target.
 
-* **Shell in Nuklear, styled after Nokia S40/S30+** (black screens, chrome
-  title and soft-key bars, pale silver highlights). The home screen, launcher, app store, dialer and
+* **Shell in Nuklear**, with a "steel night" look: a navy-to-steel
+  wallpaper under translucent dark panels, azure selection bars and cyan
+  SYSTEM INFO-style labels. The home screen, launcher, app store, dialer and
   settings are one small C program, `vortex-shell`. It uses
   [Nuklear](https://github.com/Immediate-Mode-UI/Nuklear) and its own software
   rasteriser that draws to `/dev/fb0`.

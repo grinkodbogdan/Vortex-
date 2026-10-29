@@ -15,9 +15,9 @@
 static uint32_t tile_colour(const char *s)
 {
     static const uint32_t pal[] = {
-        /* pale pastels, read well with dark letters on black */
-        0xffa9c7e8, 0xfff0b4b4, 0xffb4dcb9, 0xfff3d2a2,
-        0xffcdb9e8, 0xffa6dcd8, 0xffeab8cf, 0xffc3cbf0,
+        /* soft tints that sit well on the navy wallpaper */
+        0xff8fc4f5, 0xfff2a7a7, 0xff9ddcb6, 0xfff5cf95,
+        0xffc4b2f0, 0xff8fdad6, 0xffeeaecb, 0xffaebcf5,
     };
     uint32_t h = 2166136261u;
     while (*s)
@@ -107,10 +107,10 @@ void apps_scan(struct vx_apps *a, const char *apps_dir)
 
     apps_free(a);
     a->count = 0;
-    add_builtin(a, APP_BUILTIN_STORE, "vortex.store", "Banana Store", 0xfff6e08f);
+    add_builtin(a, APP_BUILTIN_STORE, "vortex.store", "Banana Store", 0xfff7dc7a);
     add_builtin(a, APP_BUILTIN_DIALER, "vortex.dialer", "Phone", 0xffb4dcb9);
-    add_builtin(a, APP_BUILTIN_SETTINGS, "vortex.settings", "Settings", 0xffd5dbe1);
-    add_builtin(a, APP_BUILTIN_SYSINFO, "vortex.sysinfo", "System", 0xffaab4be);
+    add_builtin(a, APP_BUILTIN_SETTINGS, "vortex.settings", "Settings", 0xffc9d4e0);
+    add_builtin(a, APP_BUILTIN_SYSINFO, "vortex.sysinfo", "System", 0xff9fb3c9);
     first_kai = a->count;
 
     d = opendir(apps_dir);

@@ -24,19 +24,22 @@
 #define ROW_H 30
 #define ROW2_H 42
 
-/* Nokia S40 / S30+ inspired theme: black screen, brushed-chrome title and
- * soft-key bars, pale silver selection bars, pastel accents. */
+/* "Steel night" theme: a navy-to-steel gradient wallpaper under
+ * translucent dark panels, azure selection bars and letter-spaced cyan
+ * section titles -- the look of the Vortex desktop, shrunk to 240x320. */
 #define C(rgb) nk_rgb(((rgb) >> 16) & 0xff, ((rgb) >> 8) & 0xff, (rgb) & 0xff)
 static const struct {
-    uint32_t bg, panel, status, accent, accent_dim, text, dim, warn, ok, sep, ink, ink_dim;
+    uint32_t bg, panel, status, accent, accent_dim, text, dim, warn, ok, sep, ink, ink_dim, cyan, border;
 } T = {
-    .bg = 0x000000, .panel = 0x121416, .status = 0x000000,
-    .accent = 0xb4c4d4,     /* pale steel blue: focus rings, spinner */
-    .accent_dim = 0x2b3138,
-    .text = 0xe9ecef, .dim = 0x8c939a,
-    .warn = 0xf1cf8f, .ok = 0xa8dcb0, .sep = 0x1d2023,
-    .ink = 0x0d0f11,        /* text on chrome / selection */
-    .ink_dim = 0x46505a,
+    .bg = 0x0a1120, .panel = 0x0c1420, .status = 0x04070c,
+    .accent = 0x2f8fe8,     /* azure: selection, focus, progress */
+    .accent_dim = 0x1b4f80,
+    .text = 0xeef3f8, .dim = 0x8d9bb0,
+    .warn = 0xffb35c, .ok = 0x5fd59a, .sep = 0x1c2838,
+    .ink = 0xffffff,        /* text on the azure selection */
+    .ink_dim = 0xcfe4f8,
+    .cyan = 0x4cc3ff,       /* section titles and labels */
+    .border = 0x2c3d52,
 };
 
 static struct nk_command_buffer *cv;
@@ -98,25 +101,51 @@ static void vgrad(struct nk_rect r, uint32_t top, uint32_t bottom)
     nk_fill_rect_multi_color(cv, r, C(top), C(top), C(bottom), C(bottom));
 }
 
-/* Brushed chrome: bright upper half, darker lower half with a crisp
- * reflection line in the middle, light rim on top, dark rim below. */
-static void chrome(struct nk_rect r)
+static void fill_a(struct nk_rect r, float round, uint32_t rgb, int alpha)
 {
-    float half = (float)(int)(r.h / 2);
-    vgrad(nk_rect(r.x, r.y, r.w, half), 0xf6f8fa, 0xd5dade);
-    vgrad(nk_rect(r.x, r.y + half, r.w, r.h - half), 0xbcc2c8, 0x9aa2aa);
-    fill(nk_rect(r.x, r.y, r.w, 1), 0, 0xffffff);
-    fill(nk_rect(r.x, r.y + r.h - 1, r.w, 1), 0, 0x50575e);
+    nk_fill_rect(cv, r, round, nk_rgba((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, alpha));
 }
 
-/* Pale silver-blue selection bar, like the S40 list highlight. */
+/* Full-screen wallpaper: deep navy at the top fading to steel blue. */
+static void wallpaper(void)
+{
+    float w = (float)S->surf->w, h = (float)S->surf->h;
+    vgrad(nk_rect(0, 0, w, h * 0.55f), 0x070c17, 0x1a2a40);
+    vgrad(nk_rect(0, h * 0.55f, w, h * 0.45f + 1), 0x1a2a40, 0x47607c);
+}
+
+/* Translucent dark glass, like the desktop's windows. */
+static void glass(struct nk_rect r, float round)
+{
+    fill_a(r, round, T.panel, 205);
+    nk_stroke_rect(cv, r, round, 1, C(T.border));
+}
+
+/* Azure selection bar with a slight top sheen. */
 static void highlight(struct nk_rect r)
 {
-    float half = (float)(int)(r.h / 2);
-    vgrad(nk_rect(r.x, r.y, r.w, half), 0xf3f6f9, 0xdde5ec);
-    vgrad(nk_rect(r.x, r.y + half, r.w, r.h - half), 0xcdd8e2, 0xb4c3d1);
-    fill(nk_rect(r.x, r.y, r.w, 1), 0, 0xffffff);
-    fill(nk_rect(r.x, r.y + r.h - 1, r.w, 1), 0, 0x7f8d9a);
+    vgrad(r, 0x3d9df2, 0x2582da);
+    fill_a(nk_rect(r.x, r.y, r.w, 1), 0, 0xffffff, 70);
+}
+
+/* Letter-spaced capitals in cyan: "SYSTEM INFO". */
+static void caps(float x, float y, const char *s)
+{
+    const struct nk_font *f = S->fonts.small;
+    char up[2] = { 0, 0 };
+    for (; *s; s++) {
+        up[0] = (char)(*s >= 'a' && *s <= 'z' ? *s - 32 : *s);
+        nk_draw_text(cv, nk_rect(x, y, 20, f->handle.height), up, 1, &f->handle, nk_rgba(0, 0, 0, 0), C(T.cyan));
+        x += text_w(f, up, 1) + 2.5f;
+    }
+}
+
+/* Thin progress bar. */
+static void meter(struct nk_rect r, int pct, uint32_t col)
+{
+    fill_a(r, r.h / 2, 0xffffff, 28);
+    if (pct > 0)
+        fill(nk_rect(r.x, r.y, r.w * (pct > 100 ? 100 : pct) / 100.f, r.h), r.h / 2, col);
 }
 
 static struct nk_rect content_rect(int with_header)
@@ -169,53 +198,71 @@ static void status_bar(void)
 
     localtime_r(&t, &tm);
     strftime(clock, sizeof(clock), "%H:%M", &tm);
-    fill(nk_rect(0, 0, w, SB_H), 0, T.status);
+    fill_a(nk_rect(0, 0, w, SB_H), 0, T.status, 225);
+    fill(nk_rect(0, SB_H - 1, w, 1), 0, T.sep);
 
-    /* Wi-Fi: S40-style bars of rising height. */
+    /* Wi-Fi signal bars */
     for (int i = 0; i < 4; i++)
-        fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.wifi_up ? T.text : 0x33383d);
+        fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.wifi_up ? T.cyan : 0x2a3444);
     if (S->job != JOB_NONE || S->store.fetch_pid > 0)
-        label(nk_rect(28, 0, 40, SB_H), "\xe2\x86\x93", f, T.accent, AL_LEFT); /* ↓ activity */
+        label(nk_rect(26, 0, 14, SB_H), "\xe2\x86\x93", f, T.cyan, AL_LEFT); /* activity */
 
-    label(nk_rect(w / 2 - 30, 0, 60, SB_H), clock, f, T.text, AL_CENTER);
-
-    if (S->sys.battery >= 0) {
-        char pct[8];
-        float bx = w - 30, fillw = 18.f * S->sys.battery / 100.f;
-        snprintf(pct, sizeof(pct), "%d%%", S->sys.battery);
-        label(nk_rect(bx - 40, 0, 36, SB_H), pct, f, T.text, AL_RIGHT);
-        nk_stroke_rect(cv, nk_rect(bx, 5, 22, 11), 1, 1, C(T.dim));
-        fill(nk_rect(bx + 22, 8, 2, 5), 0, T.dim);
-        /* four segments, like the classic battery indicator */
-        for (int i = 0; i < 4 && i * 25 < S->sys.battery; i++)
-            fill(nk_rect(bx + 2 + i * 4.5f, 7, 3.5f, 7), 0,
-                 S->sys.charging ? T.ok : S->sys.battery <= 15 ? T.warn : T.text);
-        (void)fillw;
+    /* right to left: clock, RAM, battery -- like the desktop panel */
+    {
+        float x = w - 6, tw;
+        char ram[16];
+        tw = text_w(S->fonts.small, clock, (int)strlen(clock));
+        label(nk_rect(x - tw, 0, tw + 1, SB_H), clock, f, T.text, AL_LEFT);
+        label(nk_rect(x - tw + 0.6f, 0, tw + 1, SB_H), clock, f, T.text, AL_LEFT); /* faux bold */
+        x -= tw + 8;
+        if (S->sys.mem_total_kb > 0) {
+            snprintf(ram, sizeof(ram), "RAM %ldM", (S->sys.mem_total_kb - S->sys.mem_avail_kb) / 1024);
+            tw = text_w(f, ram, (int)strlen(ram));
+            label(nk_rect(x - tw, 0, tw + 1, SB_H), ram, f, T.dim, AL_LEFT);
+            x -= tw + 8;
+        }
+        if (S->sys.battery >= 0) {
+            char pct[8];
+            uint32_t col = S->sys.charging ? T.ok : S->sys.battery <= 15 ? T.warn : T.text;
+            snprintf(pct, sizeof(pct), "%d%%", S->sys.battery);
+            tw = text_w(f, pct, (int)strlen(pct));
+            label(nk_rect(x - tw, 0, tw + 1, SB_H), pct, f, T.text, AL_LEFT);
+            x -= tw + 22;
+            nk_stroke_rect(cv, nk_rect(x, 6, 17, 9), 1, 1, C(T.dim));
+            fill(nk_rect(x + 17, 8, 2, 5), 0, T.dim);
+            fill(nk_rect(x + 2, 8, 13.f * S->sys.battery / 100.f, 5), 0, col);
+        }
     }
 }
 
 static void header(const char *title, const char *sub)
 {
     float w = (float)S->surf->w;
-    chrome(nk_rect(0, SB_H, w, HDR_H));
-    if (sub && *sub) {
-        label(nk_rect(10, SB_H, w * 0.68f - 10, HDR_H), title, S->fonts.normal, T.ink, AL_LEFT);
-        label(nk_rect(w * 0.68f, SB_H, w * 0.32f - 8, HDR_H), sub, S->fonts.small, T.ink_dim, AL_RIGHT);
-    } else {
-        label(nk_rect(10, SB_H, w - 20, HDR_H), title, S->fonts.normal, T.ink, AL_LEFT);
-    }
+    const struct nk_font *f = S->fonts.normal;
+    float tw;
+    int len;
+    const char *t = ellipsize(f, title, w * ((sub && *sub) ? 0.68f : 1.f) - 20, &len);
+    fill_a(nk_rect(0, SB_H, w, HDR_H), 0, 0x060b14, 200);
+    fill(nk_rect(0, SB_H + HDR_H - 1, w, 1), 0, T.border);
+    label(nk_rect(10, SB_H, w - 20, HDR_H - 2), t, f, T.text, AL_LEFT);
+    /* azure underline under the title, like the active tab */
+    tw = text_w(f, t, len);
+    fill(nk_rect(8, SB_H + HDR_H - 3, tw + 6, 2), 1, T.accent);
+    if (sub && *sub)
+        label(nk_rect(w * 0.68f, SB_H, w * 0.32f - 8, HDR_H - 2), sub, S->fonts.small, T.dim, AL_RIGHT);
 }
 
 static void softkeys(const char *l, const char *c, const char *r)
 {
     float w = (float)S->surf->w, y = S->surf->h - SK_H;
-    chrome(nk_rect(0, y, w, SK_H));
+    vgrad(nk_rect(0, y, w, SK_H), 0x0b1424, 0x04070c);
+    fill(nk_rect(0, y, w, 1), 0, T.border);
     if (l)
-        label(nk_rect(8, y, w / 3 - 8, SK_H), l, S->fonts.normal, T.ink, AL_LEFT);
+        label(nk_rect(8, y, w / 3 - 8, SK_H), l, S->fonts.normal, T.text, AL_LEFT);
     if (c)
-        label(nk_rect(w / 3, y, w / 3, SK_H), c, S->fonts.normal, T.ink, AL_CENTER);
+        label(nk_rect(w / 3, y, w / 3, SK_H), c, S->fonts.normal, T.cyan, AL_CENTER);
     if (r)
-        label(nk_rect(w * 2 / 3, y, w / 3 - 8, SK_H), r, S->fonts.normal, T.ink, AL_RIGHT);
+        label(nk_rect(w * 2 / 3, y, w / 3 - 8, SK_H), r, S->fonts.normal, T.text, AL_RIGHT);
 }
 
 static void spinner(float cx, float cy, float rad)
@@ -224,7 +271,7 @@ static void spinner(float cx, float cy, float rad)
     for (int i = 0; i < 8; i++) {
         float a = i * 3.14159265f / 4;
         int age = (phase - i + 8) % 8;
-        uint32_t col = age == 0 ? T.text : age < 3 ? T.accent : 0x3a4148;
+        uint32_t col = age == 0 ? T.cyan : age < 3 ? T.accent : 0x2a3a50;
         nk_fill_circle(cv, nk_rect(cx + rad * cosf(a) - 2.5f, cy + rad * sinf(a) - 2.5f, 5, 5), C(col));
     }
 }
@@ -250,8 +297,8 @@ static void scrollbar(struct nk_rect area, int top, int rows, int count)
     h = area.h * rows / count;
     if (h < 12) h = 12;
     y = area.y + (area.h - h) * top / (count - rows);
-    fill(nk_rect(area.x + area.w - 4, area.y, 3, area.h), 1, 0x15181b);
-    vgrad(nk_rect(area.x + area.w - 4, y, 3, h), 0xe6eaee, 0x9aa2aa);
+    fill_a(nk_rect(area.x + area.w - 4, area.y, 3, area.h), 1, 0xffffff, 20);
+    fill(nk_rect(area.x + area.w - 4, y, 3, h), 1, T.accent);
 }
 
 static void list_row(struct nk_rect r, int selected, const char *title, const char *sub,
@@ -260,7 +307,7 @@ static void list_row(struct nk_rect r, int selected, const char *title, const ch
     const struct nk_font *f = S->fonts.normal;
     float rw = right ? text_w(S->fonts.small, right, (int)strlen(right)) + 10 : 0;
     if (selected)
-        highlight(nk_rect(r.x + 2, r.y + 1, r.w - 8, r.h - 2));
+        highlight(nk_rect(r.x + 4, r.y + 1, r.w - 10, r.h - 2));
     else
         fill(nk_rect(r.x + 8, r.y + r.h - 1, r.w - 16, 1), 0, T.sep);
     if (sub) {
@@ -285,8 +332,8 @@ static void toast_overlay(void)
         msg = S->toast;
     if (!msg)
         return;
-    fill(nk_rect(8, y, w - 16, 28), 4, T.panel);
-    nk_stroke_rect(cv, nk_rect(8, y, w - 16, 28), 4, 1, C(0x9aa2aa));
+    fill_a(nk_rect(8, y, w - 16, 28), 6, 0x08101c, 240);
+    nk_stroke_rect(cv, nk_rect(8, y, w - 16, 28), 6, 1, C(T.accent));
     if (S->job != JOB_NONE) {
         spinner(24, y + 14, 6);
         label(nk_rect(38, y, w - 54, 28), msg, S->fonts.small, T.text, AL_LEFT);
@@ -649,17 +696,44 @@ static void draw_home(void)
     char hm[8], date[32];
     time_t t = time(NULL);
     struct tm tm;
-    float w = (float)S->surf->w, h = (float)S->surf->h;
+    float w = (float)S->surf->w;
 
     localtime_r(&t, &tm);
     strftime(hm, sizeof(hm), "%H:%M", &tm);
     strftime(date, sizeof(date), "%A, %e %B", &tm);
-    fill(nk_rect(0, SB_H, w, h - SB_H - SK_H), 0, T.bg);
-    /* soft silver glow at the bottom of the standby screen */
-    vgrad(nk_rect(0, h - SK_H - 90, w, 90), 0x000000, 0x1c2229);
-    label(nk_rect(10, SB_H + 4, w - 20, 20), "Vortex", S->fonts.normal, T.accent, AL_LEFT);
-    label(nk_rect(0, SB_H + 44, w, S->fonts.clock->handle.height), hm, S->fonts.clock, T.text, AL_CENTER);
-    label(nk_rect(0, SB_H + 50 + S->fonts.clock->handle.height, w, 22), date, S->fonts.normal, T.dim, AL_CENTER);
+    float ch = S->fonts.clock->handle.height, cy = SB_H + 14;
+    float card_y = cy + ch + 34, card_h = 30 + 4 * 26 + 2, ry;
+    long used = (S->sys.mem_total_kb - S->sys.mem_avail_kb) / 1024;
+    char v[48];
+    label(nk_rect(0, cy, w, ch), hm, S->fonts.clock, T.text, AL_CENTER);
+    label(nk_rect(0, cy + ch + 4, w, 20), date, S->fonts.normal, T.dim, AL_CENTER);
+
+    /* the desktop's SYSTEM INFO panel, as a card */
+    glass(nk_rect(8, card_y, w - 16, card_h), 8);
+    caps(18, card_y + 8, "System info");
+    ry = card_y + 30;
+    label(nk_rect(18, ry, 70, 16), "Battery", S->fonts.small, T.cyan, AL_LEFT);
+    if (S->sys.battery >= 0) {
+        snprintf(v, sizeof(v), "%d%%%s", S->sys.battery, S->sys.charging ? " charging" : "");
+        label(nk_rect(90, ry, w - 108, 16), v, S->fonts.small, T.text, AL_LEFT);
+        meter(nk_rect(90, ry + 17, w - 108, 3), S->sys.battery, S->sys.battery <= 15 ? T.warn : T.accent);
+    } else {
+        label(nk_rect(90, ry, w - 108, 16), "AC", S->fonts.small, T.text, AL_LEFT);
+    }
+    ry += 26;
+    label(nk_rect(18, ry, 70, 16), "Memory", S->fonts.small, T.cyan, AL_LEFT);
+    snprintf(v, sizeof(v), "%ld / %ld MB", used, S->sys.mem_total_kb / 1024);
+    label(nk_rect(90, ry, w - 108, 16), v, S->fonts.small, T.text, AL_LEFT);
+    meter(nk_rect(90, ry + 17, w - 108, 3),
+          S->sys.mem_total_kb ? (int)(used * 100 * 1024 / S->sys.mem_total_kb) : 0, T.accent);
+    ry += 26;
+    label(nk_rect(18, ry, 70, 16), "Network", S->fonts.small, T.cyan, AL_LEFT);
+    label(nk_rect(90, ry, w - 108, 16), S->sys.wifi_up ? "Wi-Fi connected" : "Offline", S->fonts.small,
+          S->sys.wifi_up ? T.text : T.dim, AL_LEFT);
+    ry += 26;
+    label(nk_rect(18, ry, 70, 16), "Uptime", S->fonts.small, T.cyan, AL_LEFT);
+    snprintf(v, sizeof(v), "%ldh %02ldm", S->sys.uptime_s / 3600, S->sys.uptime_s / 60 % 60);
+    label(nk_rect(90, ry, w - 108, 16), v, S->fonts.small, T.text, AL_LEFT);
     softkeys("Store", "Menu", "Settings");
 }
 
@@ -689,10 +763,10 @@ static void draw_launcher(void)
                 continue;
             a = &S->apps.list[i];
             if (i == S->launcher_sel) {
-                /* chrome frame around the focused icon */
+                /* azure focus frame around the focused icon */
                 struct nk_rect fr = nk_rect(ix - 9, iy - 9, isz + 18, isz + 18);
-                vgrad(fr, 0x39414a, 0x14181c);
-                nk_stroke_rect(cv, fr, 6, 2, C(0xdfe5ea));
+                fill_a(fr, 10, T.accent, 70);
+                nk_stroke_rect(cv, fr, 10, 2, C(0x5aaef5));
             }
             icon = apps_icon(&S->apps, i, (int)isz);
             if (icon) {
@@ -709,7 +783,7 @@ static void draw_launcher(void)
                 /* glossy top half */
                 nk_fill_rect(cv, nk_rect(ix + 2, iy + 2, isz - 4, isz / 2 - 2), 8, nk_rgba(255, 255, 255, 60));
                 label(nk_rect(ix, iy, isz, isz), letter, cp <= 0xff ? S->fonts.large : S->fonts.normal,
-                      T.ink, AL_CENTER);
+                      0x0d1420, AL_CENTER);
             }
         }
     }
@@ -907,22 +981,36 @@ static void draw_wifi(void)
 static void draw_sysinfo(void)
 {
     struct nk_rect area = content_rect(1);
-    char lines[8][64];
+    const char *k[9];
+    char v[9][48];
     int n = 0;
-    float y = area.y + 8;
+    float y;
+    long used = (S->sys.mem_total_kb - S->sys.mem_avail_kb) / 1024;
 
+#define ROW(key, ...) do { k[n] = key; snprintf(v[n], sizeof(v[n]), __VA_ARGS__); n++; } while (0)
     header("System", NULL);
-    snprintf(lines[n++], 64, "Memory: %ld / %ld MB free", S->sys.mem_avail_kb / 1024, S->sys.mem_total_kb / 1024);
-    snprintf(lines[n++], 64, "Used: %ld MB", (S->sys.mem_total_kb - S->sys.mem_avail_kb) / 1024);
-    snprintf(lines[n++], 64, "Shell RSS: %ld KB", S->sys.self_rss_kb);
-    snprintf(lines[n++], 64, "Uptime: %ldh %02ldm", S->sys.uptime_s / 3600, S->sys.uptime_s / 60 % 60);
-    snprintf(lines[n++], 64, "Kernel: %s", S->sys.kernel);
+    ROW("Host", "vortex");
+    ROW("Kernel", "Linux %s", S->sys.kernel);
+    ROW("Uptime", "%ldh %02ldm", S->sys.uptime_s / 3600, S->sys.uptime_s / 60 % 60);
+    ROW("Memory", "%ld / %ld MB", used, S->sys.mem_total_kb / 1024);
+    ROW("Shell", "%ld KB RSS", S->sys.self_rss_kb);
     if (S->sys.battery >= 0)
-        snprintf(lines[n++], 64, "Battery: %d%%%s", S->sys.battery, S->sys.charging ? " (charging)" : "");
-    snprintf(lines[n++], 64, "Apps installed: %d", S->apps.count - 4);
-    snprintf(lines[n++], 64, "Vortex " VORTEX_VERSION);
-    for (int i = 0; i < n; i++, y += 24)
-        label(nk_rect(12, y, area.w - 24, 22), lines[i], S->fonts.normal, i == 0 ? T.text : T.dim, AL_LEFT);
+        ROW("Battery", "%d%%%s", S->sys.battery, S->sys.charging ? " charging" : "");
+    ROW("Network", "%s", S->sys.wifi_up ? "Wi-Fi connected" : "offline");
+    ROW("Apps", "%d installed", S->apps.count - 4);
+    ROW("Vortex", "%s", VORTEX_VERSION);
+#undef ROW
+
+    glass(nk_rect(6, area.y + 6, area.w - 12, area.h - 12), 8);
+    caps(16, area.y + 14, "System info");
+    y = area.y + 36;
+    for (int i = 0; i < n; i++, y += 21) {
+        label(nk_rect(16, y, 70, 20), k[i], S->fonts.small, T.cyan, AL_LEFT);
+        label(nk_rect(84, y, area.w - 100, 20), v[i], S->fonts.small, T.text, AL_LEFT);
+        if (!strcmp(k[i], "Memory"))
+            meter(nk_rect(84, y + 18, area.w - 100, 2),
+                  S->sys.mem_total_kb ? (int)(used * 100 * 1024 / S->sys.mem_total_kb) : 0, T.accent);
+    }
     softkeys(NULL, NULL, "Back");
 }
 
@@ -930,7 +1018,7 @@ static void draw_dialer(void)
 {
     struct nk_rect area = content_rect(0);
     header("Phone", S->call_active ? "in call" : NULL);
-    fill(nk_rect(0, SB_H + HDR_H, area.w, area.h - HDR_H), 0, T.bg);
+    glass(nk_rect(8, area.y + 56, area.w - 16, 56), 8);
     label(nk_rect(8, area.y + 70, area.w - 16, S->fonts.large->handle.height + 8),
           S->dial[0] ? S->dial : "Enter number", S->fonts.large, S->dial[0] ? T.text : T.dim, AL_CENTER);
     if (S->call_active)
@@ -949,8 +1037,8 @@ static void draw_input(void)
     header(title, t9_mode_label(&S->t9));
     if (S->input == INPUT_WIFI_PSK)
         label(nk_rect(10, area.y + 6, area.w - 20, 20), S->wifi_target, S->fonts.small, T.dim, AL_LEFT);
-    fill(nk_rect(8, fy, area.w - 16, 34), 2, 0xf2f4f6);
-    nk_stroke_rect(cv, nk_rect(8, fy, area.w - 16, 34), 2, 1, C(0x7f8d9a));
+    fill_a(nk_rect(8, fy, area.w - 16, 34), 6, 0x050a12, 230);
+    nk_stroke_rect(cv, nk_rect(8, fy, area.w - 16, 34), 6, 1, C(T.accent));
     snprintf(shown, sizeof(shown), "%s|", S->t9.text);
     label(nk_rect(16, fy, area.w - 32, 34), shown, S->fonts.normal, T.ink, AL_LEFT);
     if (S->input == INPUT_SEARCH) {
@@ -974,10 +1062,13 @@ static void draw_menu(void)
                         S->menu == MENU_APP_OPTIONS ? S->apps.list[S->menu_app].name : "Uninstall app?";
 
     /* dim the screen underneath */
-    nk_fill_rect(cv, nk_rect(0, SB_H, w, S->surf->h - SB_H), 0, nk_rgba(0, 0, 0, 170));
-    fill(nk_rect(0, my, w, mh), 0, T.panel);
-    chrome(nk_rect(0, my, w, 32));
-    label(nk_rect(10, my, w - 20, 32), title, S->fonts.normal, T.ink, AL_LEFT);
+    nk_fill_rect(cv, nk_rect(0, SB_H, w, S->surf->h - SB_H), 0, nk_rgba(2, 5, 10, 150));
+    /* a small "window": title bar with an azure badge, glass body */
+    fill_a(nk_rect(4, my - 4, w - 8, mh + 2), 8, 0x0b1320, 245);
+    nk_stroke_rect(cv, nk_rect(4, my - 4, w - 8, mh + 2), 8, 1, C(T.border));
+    fill(nk_rect(12, my + 9, 9, 9), 2, T.accent);
+    label(nk_rect(28, my - 2, w - 40, 32), title, S->fonts.normal, T.text, AL_LEFT);
+    fill(nk_rect(4, my + 29, w - 8, 1), 0, T.border);
     for (int i = 0; i < n; i++)
         list_row(nk_rect(0, my + 34 + i * ROW_H, w, ROW_H), i == S->menu_sel, items[i], NULL, NULL, 0);
     softkeys(NULL, "Select", "Cancel");
@@ -1011,6 +1102,13 @@ void shell_draw(struct shell *sh)
     cv = nk_window_get_canvas(&sh->ctx);
     nk_push_scissor(cv, nk_rect(0, 0, (float)sh->surf->w, (float)sh->surf->h));
 
+    wallpaper();
+    {
+        enum screen under = top() == SCR_MENU && S->depth > 1 ? S->stack[S->depth - 2] : top();
+        /* darken the content area of list screens so text stays crisp */
+        if (under != SCR_HOME && under != SCR_LAUNCHER)
+            fill_a(content_rect(1), 0, 0x05090f, 120);
+    }
     if (top() == SCR_MENU && S->depth > 1)
         draw_screen(S->stack[S->depth - 2]);
     draw_screen(top());
