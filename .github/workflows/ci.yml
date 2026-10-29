@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y imagemagick zip unzip shellcheck
+        run: sudo apt-get update && sudo apt-get install -y imagemagick zip unzip shellcheck adb
       - name: Build shell (device + headless)
         run: make -C shell all headless
       - name: Shell screenshot tests
@@ -26,11 +26,14 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Runtime tests
         run: runtime/tests/run.sh
+      - name: adbd (real adb client over localhost TCP)
+        run: make -C adbd test
       - name: Shellcheck
         run: |
           shellcheck -s sh -S warning $(grep -l '^#!/bin/sh' runtime/vortex-* runtime/tests/*.sh) \
             rootfs/*.sh kernel/build.sh tools/*.sh tools/vm/*.sh tools/phone/initramfs-init shell/tests/*.sh \
-            rootfs/overlay/etc/sv/vortex-shell/run rootfs/overlay/etc/runit/core-services/*.sh
+            rootfs/overlay/etc/sv/*/run rootfs/overlay/etc/sv/*/log/run rootfs/overlay/etc/runit/core-services/*.sh \
+            adbd/tests/run.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -45,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y clang lld qemu-user imagemagick
+        run: sudo apt-get update && sudo apt-get install -y clang lld qemu-user imagemagick adb
       - name: Void armv7 musl sysroot
         run: |
           mkdir -p xbps sysroot
@@ -56,11 +59,21 @@ jobs:
         run: |
           CC="clang --target=armv7l-linux-musleabihf --sysroot=$PWD/sysroot -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard"
           make -C shell CC="$CC" LDFLAGS="-fuse-ld=lld -static -s" all vortex-shell-headless
-          file shell/vortex-shell shell/vortex-shell-headless
+          make -C adbd CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
+          file shell/vortex-shell shell/vortex-shell-headless shell/vortex-splash adbd/vortex-adbd
       - name: Screenshot tests on the ARM binary (qemu-arm)
         run: |
           cd shell
           mv vortex-shell-headless vsh-arm
+          mv vortex-splash splash-arm
           printf '#!/bin/sh\nexec qemu-arm "$(dirname "$0")/vsh-arm" "$@"\n' > vortex-shell-headless
-          chmod +x vortex-shell-headless
+          printf '#!/bin/sh\nexec qemu-arm "$(dirname "$0")/splash-arm" "$@"\n' > vortex-splash
+          chmod +x vortex-shell-headless vortex-splash
+          ./tests/run.sh
+      - name: adbd tests on the ARM binary (qemu-arm)
+        run: |
+          cd adbd
+          mv vortex-adbd adbd-arm
+          printf '#!/bin/sh\nexec qemu-arm "$(dirname "$0")/adbd-arm" "$@"\n' > vortex-adbd
+          chmod +x vortex-adbd
           ./tests/run.sh

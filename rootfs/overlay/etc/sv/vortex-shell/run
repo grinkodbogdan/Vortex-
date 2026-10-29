@@ -11,4 +11,9 @@ export HOME=/var/lib/vortex PATH=/usr/bin:/usr/sbin:/usr/libexec/vortex
 # _seatd lets web apps run a Wayland compositor where seatd is used (VM)
 G=vortex:vortex:video:input:audio
 getent group _seatd >/dev/null 2>&1 && G=$G:_seatd
+# The boot logo stays on the panel until the shell's first frame replaces it.
+if [ -r /dev/.vortex-splash.pid ]; then
+	kill "$(cat /dev/.vortex-splash.pid)" 2>/dev/null
+	rm -f /dev/.vortex-splash.pid
+fi
 exec chpst -u "$G" vortex-shell

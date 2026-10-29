@@ -70,13 +70,12 @@ to KaiOS, restore your `boot` backup.
 ## 3. First boot
 
 * lk2nd draws "lk2nd-msm8909 23.1" over the KaiOS logo and starts the
-  Vortex kernel. A few seconds later the screen switches to scrolling boot
-  messages (the initramfs loads the panel driver first), and the USB debug
-  console appears on the PC.
+  Vortex kernel. A few seconds later the Vortex logo appears, and the USB
+  debug console and adb become available on the PC.
 * **The first boot takes several minutes.** The image was put together on a
   PC, so the phone now runs every package's setup step once
-  (`/var/log/vortex-firstboot.log`). The screen shows *"Vortex: first-boot
-  setup, please wait..."*.
+  (`/var/log/vortex-firstboot.log`). The boot logo says *"Setting up Vortex
+  (first boot only)"*.
 * Then the Vortex home screen appears. Later boots go straight to it.
 
 Keys: the soft keys are the left/right labels, OK selects, C goes back,
@@ -84,6 +83,16 @@ red End goes home (hold it for the power menu), and green Call opens the
 dialer.
 
 ## Debugging
+
+* **adb:** Vortex runs an adb daemon on USB (alongside the serial console):
+  `adb devices`, `adb shell`, `adb push`/`pull`, `adb reboot` (also
+  `reboot bootloader` for lk2nd's fastboot and `reboot edl`). There is no
+  authorisation prompt. For adb over Wi-Fi, run `touch /etc/vortex/adb-tcp`
+  and `sv restart adbd`, then `adb connect PHONE-IP:5555` (anyone on the
+  network gets a root shell then). To turn adb off: `sv down adbd`.
+* **Wi-Fi does not come on:** Settings shows "No Wi-Fi hardware found" when
+  the Wi-Fi chip did not start. `dmesg | grep -i -e wcn -e pronto -e firmware`
+  shows why (the firmware comes from the phone's `modem` partition).
 
 > alpha2 did not load the charger driver (`pm8916-lbc`) in its initramfs.
 > That driver tells the USB controller that a cable is plugged in, so the

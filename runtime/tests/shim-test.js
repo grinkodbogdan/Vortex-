@@ -57,7 +57,7 @@ const server = http.createServer((req, res) => {
              setting: got['vortex.test'], ad, activity: typeof MozActivity };
   });
 
-  for (const k of ['F1', 'F2', 'ArrowDown', 'Escape'])
+  for (const k of ['F1', 'F2', 'NumpadDivide', 'ArrowDown', 'Escape'])
     await page.keyboard.press(k);
   await page.waitForTimeout(50);
   const keys = await page.evaluate(() => window.__keys);
@@ -75,6 +75,7 @@ const server = http.createServer((req, res) => {
     ['MozActivity exists', r.activity === 'function'],
     ['F1 -> SoftLeft', keys.includes('SoftLeft:0')],
     ['F2 -> SoftRight', keys.includes('SoftRight:0')],
+    ['keypad / -> # (keyCode 163)', keys.includes('#:163')],
     ['ArrowDown passes through', keys.includes('ArrowDown:40')],
     ['Escape -> Backspace (keyCode 8)', keys.includes('Backspace:8')],
     ['unhandled Backspace closes the app', closed === 1],

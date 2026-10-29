@@ -6,6 +6,7 @@
 base-files
 runit-void
 dash
+bash               # adb shell (line editing, history)
 coreutils
 findutils
 diffutils

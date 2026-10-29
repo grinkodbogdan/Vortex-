@@ -1,0 +1,18 @@
+#!/bin/sh
+# adb over USB (and over Wi-Fi if /etc/vortex/adb-tcp exists: then
+# "adb connect PHONE-IP:5555").  No authentication: anyone with the cable,
+# or on your network for adb-tcp, gets a root shell.  Turn it off with
+#   sv down adbd && touch /etc/sv/adbd/down
+exec 2>&1
+g=$(/usr/libexec/vortex/vortex-usb-gadget) || exit 1
+modprobe -q usb_f_fs 2>/dev/null || true
+# The gadget can only gain a function while it is not bound; adbd binds it
+# again (-b) once it has written its USB descriptors.
+echo "" > "$g/UDC" 2>/dev/null || true
+mkdir -p "$g/functions/ffs.adb"
+[ -e "$g/configs/c.1/ffs.adb" ] || ln -s "$g/functions/ffs.adb" "$g/configs/c.1/"
+mkdir -p /dev/usb-ffs/adb
+mountpoint -q /dev/usb-ffs/adb || mount -t functionfs adb /dev/usb-ffs/adb
+set -- -u /dev/usb-ffs/adb -b "$g"
+[ -e /etc/vortex/adb-tcp ] && set -- "$@" -t 5555
+exec /usr/libexec/vortex/vortex-adbd "$@"

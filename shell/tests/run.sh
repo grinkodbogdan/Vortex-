@@ -60,6 +60,14 @@ CONF=$OUT/vortex3.conf run store-retry "soft_left wait:400 shot:$OUT/store-error
 CONF=$OUT/vortex2.conf run store-open "soft_left down ok ok soft_left wait:1500 wait:300 shot:$OUT/store-after-app.ppm"
 run options    "ok right right right right right soft_left shot:$OUT/options.ppm down ok shot:$OUT/confirm.ppm"
 
+# boot logo, mid-animation, with the first-boot message
+echo "Setting up Vortex (first boot only). This takes a few minutes..." > "$OUT/splash.msg"
+if ./vortex-splash --ppm "$OUT/splash.ppm" -t 1800 -m "$OUT/splash.msg" 2>"$OUT/splash.log"; then
+	echo "ok   splash"
+else
+	echo "FAIL splash"; cat "$OUT/splash.log"; fail=1
+fi
+
 # every screenshot must exist and not be blank
 for f in "$OUT"/*.ppm; do
 	if [ "$(tail -c 4000 "$f" | od -An -tu1 | tr -s ' ' '\n' | sort -u | wc -l)" -lt 3 ]; then

@@ -1,0 +1,16 @@
+# Nokia 6300 4G (nokia-leo) keypad.  The mainline device tree gives the soft,
+# call and end keys codes above 255 (KEY_KBD_LCD_MENU1/2, KEY_PICKUP_PHONE,
+# KEY_HANGUP_PHONE) and # / * as KEY_NUMERIC_POUND/STAR.  X11/Wayland
+# keymaps (and so WebKit, i.e. KaiOS apps) cannot express codes above 255,
+# so remap them to keys every program understands.
+# Scan codes of gpio-matrix-keypad: row * 8 + column (6 columns -> shift 3).
+evdev:name:keypad:*
+ KEYBOARD_KEY_00=f1
+ KEYBOARD_KEY_15=f2
+ KEYBOARD_KEY_05=f3
+ KEYBOARD_KEY_0d=f4
+ KEYBOARD_KEY_14=kpslash
+
+# The * key is a separate GPIO key.
+evdev:name:gpio-keys:*
+ KEYBOARD_KEY_00=kpasterisk

@@ -643,7 +643,7 @@ static void settings_value(int i, char *buf, size_t n)
             snprintf(buf, n, "< Never >");
         break;
     case SET_WIFI:
-        snprintf(buf, n, "%s", S->sys.wifi_up ? "Connected" : "Off");
+        snprintf(buf, n, "%s", S->sys.wifi_up ? "Connected" : S->sys.wifi_on ? "On" : "Off");
         break;
     default:
         break;
@@ -678,10 +678,12 @@ static void settings_adjust(int dir)
 
 static void settings_activate(void)
 {
-    char *argv[3] = { "vortex-wifi", "toggle", NULL };
+    char *argv[3] = { "vortex-wifi", NULL, NULL };
     switch (S->settings_sel) {
     case SET_WIFI:
-        start_job(JOB_WIFI_TOGGLE, "Switching Wi-Fi\xe2\x80\xa6", argv);
+        sys_update(&S->sys);
+        argv[1] = S->sys.wifi_on ? "off" : "on";
+        start_job(JOB_WIFI_TOGGLE, S->sys.wifi_on ? "Turning Wi-Fi off\xe2\x80\xa6" : "Turning Wi-Fi on\xe2\x80\xa6", argv);
         break;
     case SET_WIFI_NETS:
         push(SCR_WIFI);
@@ -1779,6 +1781,15 @@ static void job_done(int code)
         break;
     case JOB_WIFI_TOGGLE:
         sys_update(&S->sys);
+        if (code == 2) {
+            toast("No Wi-Fi hardware found");
+        } else if (code != 0) {
+            toast("Could not switch Wi-Fi");
+        } else if (S->sys.wifi_on && !S->sys.wifi_up) {
+            /* just switched on and not connected: show the networks */
+            push(SCR_WIFI);
+            wifi_scan();
+        }
         break;
     case JOB_CALL:
         if (code != 0) {

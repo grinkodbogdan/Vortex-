@@ -1,0 +1,5 @@
+#!/bin/sh
+[ -d /var/log/adbd ] || mkdir -p /var/log/adbd
+# small rotation: 2 x 32 KiB
+printf 's32768\nn2\n' > /var/log/adbd/config
+exec svlogd -tt /var/log/adbd

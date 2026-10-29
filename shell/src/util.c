@@ -117,6 +117,15 @@ enum vx_key vx_key_from_name(const char *name)
 /* Default evdev mapping.  The Nokia 6300 4G keypad matrix is described in
  * the device tree; these cover the usual codes plus a desktop keyboard so
  * the shell is usable on a PC VT. /etc/vortex/keymap.conf overrides them. */
+#ifndef KEY_PICKUP_PHONE
+#define KEY_PICKUP_PHONE 0x1bd
+#define KEY_HANGUP_PHONE 0x1be
+#endif
+#ifndef KEY_KBD_LCD_MENU1
+#define KEY_KBD_LCD_MENU1 0x2b8
+#define KEY_KBD_LCD_MENU2 0x2b9
+#endif
+
 void keymap_defaults(enum vx_key map[VX_KEYMAP_SIZE])
 {
     static const struct { int code; enum vx_key key; } defs[] = {
@@ -129,6 +138,11 @@ void keymap_defaults(enum vx_key map[VX_KEYMAP_SIZE])
         { KEY_BACKSPACE, VK_BACK }, { KEY_BACK, VK_BACK }, { KEY_ESC, VK_BACK },
         { KEY_SEND, VK_CALL }, { KEY_PHONE, VK_CALL }, { KEY_F3, VK_CALL },
         { KEY_END, VK_END }, { KEY_POWER, VK_END }, { KEY_F4, VK_END },
+        /* Nokia 6300 4G keypad as the mainline device tree reports it (the
+         * udev hwdb in the image remaps these to F1-F4; this covers a
+         * system without it) */
+        { KEY_KBD_LCD_MENU1, VK_SOFT_LEFT }, { KEY_KBD_LCD_MENU2, VK_SOFT_RIGHT },
+        { KEY_PICKUP_PHONE, VK_CALL }, { KEY_HANGUP_PHONE, VK_END },
         { KEY_0, VK_0 }, { KEY_1, VK_1 }, { KEY_2, VK_2 }, { KEY_3, VK_3 },
         { KEY_4, VK_4 }, { KEY_5, VK_5 }, { KEY_6, VK_6 }, { KEY_7, VK_7 },
         { KEY_8, VK_8 }, { KEY_9, VK_9 },

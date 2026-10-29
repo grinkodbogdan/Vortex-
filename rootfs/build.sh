@@ -39,6 +39,8 @@ export XBPS_ARCH=armv7l-musl
 PMOS=https://mirror.postmarketos.org/postmarketos
 KPKG=v24.06/linux-postmarketos-qcom-msm8916-6.6-r5
 GPUFW=master/firmware-qcom-adreno-a300-20260110-r1
+# Wi-Fi calibration: postmarketOS' device-nokia-leo uses the 8000 4G's.
+WLANNV=v24.06/firmware-nokia-sparkler-wcnss-nv-20.00.17.01-r0
 # The bootloader is lk2nd's own msm8909 build (it knows nokia,leo), from
 # https://github.com/msm8916-mainline/lk2nd/releases.  postmarketOS'
 # lk2nd-msm8916 package does NOT start on this phone.
@@ -80,7 +82,7 @@ xbps_unpack "$ROOT" $(sed 's/#.*//' "$HERE/packages.txt")
 msg "fetching postmarketOS kernel, lk2nd and GPU firmware"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-for p in $KPKG $GPUFW; do
+for p in $KPKG $GPUFW $WLANNV; do
 	n=${p##*/}
 	curl -fsSL -o "$T/$n.apk" "$PMOS/${p%%/*}/armv7/$n.apk"
 	mkdir -p "$T/$n"
@@ -88,6 +90,7 @@ for p in $KPKG $GPUFW; do
 done
 KPKG=${KPKG##*/}
 GPUFW=${GPUFW##*/}
+WLANNV=${WLANNV##*/}
 # modules live in /lib/modules (older packages) or /usr/lib/modules
 KMOD=$(ls -d "$T/$KPKG"/usr/lib/modules/* "$T/$KPKG"/lib/modules/* 2>/dev/null | head -n 1)
 KVER=${KMOD##*/}
@@ -104,6 +107,10 @@ cp -a "$KMOD" "$ROOT/usr/lib/modules/"
 cp -a "$T/$GPUFW/usr/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null ||
 	cp -a "$T/$GPUFW/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null || true
 
+# fallback only: the phone's own file on "persist" wins (01-vortex-firmware.sh)
+install -Dm644 "$(find "$T/$WLANNV" -name WCNSS_qcom_wlan_nv.bin | head -n 1)" \
+	"$ROOT/usr/lib/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin"
+
 msg "panel init sequence"
 # tools/phone/$PANEL.txt is pmaports' device-nokia-leo file (commit above)
 # (sha512 8583c7d5...), kept here so builds don't depend on GitLab.
@@ -117,9 +124,16 @@ CC="clang --target=armv7l-linux-musleabihf --sysroot=$SYS -mcpu=cortex-a7 -mfpu=
 make -s -C "$TOP/shell" clean
 make -s -C "$TOP/shell" CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
 install -Dm755 "$TOP/shell/vortex-shell" "$ROOT/usr/bin/vortex-shell"
+install -Dm755 "$TOP/shell/vortex-splash" "$ROOT/usr/libexec/vortex/vortex-splash"
 make -s -C "$TOP/shell" clean
 
-for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage; do
+msg "cross-compiling vortex-adbd"
+make -s -C "$TOP/adbd" clean
+make -s -C "$TOP/adbd" CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
+install -Dm755 "$TOP/adbd/vortex-adbd" "$ROOT/usr/libexec/vortex/vortex-adbd"
+make -s -C "$TOP/adbd" clean
+
+for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget; do
 	install -Dm755 "$TOP/runtime/$f" "$ROOT/usr/libexec/vortex/$f"
 done
 install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
@@ -166,7 +180,7 @@ EOF
 SV=$ROOT/etc/runit/runsvdir/default
 mkdir -p "$SV"
 rm -f "$SV"/agetty-*
-for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell; do
+for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd; do
 	[ -d "$ROOT/etc/sv/$s" ] && ln -sf "/etc/sv/$s" "$SV/$s"
 done
 # Wi-Fi starts off (vortex-wifi on brings it up): saves ~4 MB and battery.

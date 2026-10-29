@@ -4,7 +4,9 @@
 struct vx_sys {
     int battery;        /* percent, -1 unknown */
     int charging;
-    int wifi_up;
+    int wifi_hw;        /* wlan0 exists (firmware loaded) */
+    int wifi_on;        /* wlan0 is up (radio on) */
+    int wifi_up;        /* wlan0 has a link (associated) */
     int net_up;         /* any interface but lo has a link */
     long mem_total_kb, mem_avail_kb;
     long self_rss_kb;

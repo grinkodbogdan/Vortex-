@@ -105,6 +105,8 @@
   function remap(e) {
     if (e.__vortex) return;
     var mapped = KEYMAP[e.key];
+    // The keypad's # arrives as keypad "/" (see the image's udev hwdb).
+    if (e.code === 'NumpadDivide') mapped = '#';
     var target = document.activeElement || document.body || document.documentElement;
     if (mapped) {
       e.stopImmediatePropagation();

@@ -3,16 +3,10 @@
 #   screen /dev/ttyACM0 115200
 # The initramfs normally sets the gadget up already; create it if not.
 exec 2>&1
-g=/sys/kernel/config/usb_gadget/vortex
 if [ ! -e /dev/ttyGS0 ]; then
-	modprobe -q libcomposite; modprobe -q usb_f_acm
-	mountpoint -q /sys/kernel/config || mount -t configfs configfs /sys/kernel/config
-	mkdir -p "$g/strings/0x409" "$g/configs/c.1" "$g/functions/acm.usb0"
-	echo 0x1d6b > "$g/idVendor"
-	echo 0x0104 > "$g/idProduct"
-	echo "Nokia 6300 4G (Vortex debug)" > "$g/strings/0x409/product"
-	ln -sf "$g/functions/acm.usb0" "$g/configs/c.1/"
-	ls /sys/class/udc > "$g/UDC"
+	g=$(/usr/libexec/vortex/vortex-usb-gadget) || exit 1
+	# adbd binds the gadget once its function is ready; without adbd, bind here
+	[ -e /etc/runit/runsvdir/default/adbd ] || ls /sys/class/udc > "$g/UDC"
 	sleep 1
 fi
 exec agetty --autologin root --noclear --local-line ttyGS0 115200 vt100

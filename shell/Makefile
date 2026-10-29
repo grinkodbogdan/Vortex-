@@ -20,7 +20,7 @@ DESTDIR  ?=
 COMMON = src/main.c src/ui.c src/gfx.c src/apps.c src/store.c src/json.c \
          src/proc.c src/sysinfo.c src/t9.c src/util.c
 
-all: vortex-shell
+all: vortex-shell vortex-splash
 
 # Nuklear + stb_image are big; build them once with optimisation for size.
 build/nk_impl.o: src/nk_impl.c src/nk.h
@@ -39,15 +39,20 @@ vortex-shell: $(OBJS) build/platform_linux.o
 vortex-shell-headless: $(OBJS) build/platform_headless.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# Boot logo (initramfs): standalone, no Nuklear.
+vortex-splash: src/splash.c src/splash_data.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ src/splash.c
+
 headless: vortex-shell-headless
 
-test: vortex-shell-headless
+test: vortex-shell-headless vortex-splash
 	./tests/run.sh
 
-install: vortex-shell
+install: vortex-shell vortex-splash
 	install -Dm755 vortex-shell $(DESTDIR)$(PREFIX)/bin/vortex-shell
+	install -Dm755 vortex-splash $(DESTDIR)$(PREFIX)/libexec/vortex/vortex-splash
 
 clean:
-	rm -rf build vortex-shell vortex-shell-headless tests/out
+	rm -rf build vortex-shell vortex-shell-headless vortex-splash tests/out
 
 .PHONY: all headless test install clean

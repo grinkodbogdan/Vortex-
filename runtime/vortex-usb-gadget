@@ -1,0 +1,22 @@
+#!/bin/sh
+# Make sure the Vortex USB gadget exists (normally the initramfs created it
+# for its debug console).  Prints its configfs directory.  Does not bind it
+# to the USB controller: the usb-shell and adbd services do that.
+#
+#   vortex-usb-gadget
+set -eu
+g=/sys/kernel/config/usb_gadget/vortex
+modprobe -q libcomposite 2>/dev/null || true
+mountpoint -q /sys/kernel/config || mount -t configfs configfs /sys/kernel/config
+if [ ! -d "$g/functions/acm.usb0" ]; then
+	modprobe -q usb_f_acm 2>/dev/null || true
+	mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.usb0"
+	echo 0x1d6b > "$g/idVendor"   # Linux Foundation
+	echo 0x0104 > "$g/idProduct"  # multifunction composite gadget
+	echo Vortex > "$g/strings/0x409/manufacturer"
+	echo "Nokia 6300 4G (Vortex debug)" > "$g/strings/0x409/product"
+	echo vortex > "$g/strings/0x409/serialnumber"
+	echo "serial console + adb" > "$g/configs/c.1/strings/0x409/configuration"
+	[ -e "$g/configs/c.1/acm.usb0" ] || ln -s "$g/functions/acm.usb0" "$g/configs/c.1/"
+fi
+echo "$g"

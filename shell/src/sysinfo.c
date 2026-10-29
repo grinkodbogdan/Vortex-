@@ -76,6 +76,19 @@ void sys_update(struct vx_sys *s)
     struct utsname u;
     long carrier;
     battery(s);
+    s->wifi_hw = access("/sys/class/net/wlan0", F_OK) == 0;
+    s->wifi_on = 0;
+    if (s->wifi_hw) {
+        /* IFF_UP; "flags" is hex, e.g. 0x1003 */
+        FILE *f = fopen("/sys/class/net/wlan0/flags", "r");
+        unsigned long flags = 0;
+        if (f) {
+            if (fscanf(f, "%lx", &flags) != 1)
+                flags = 0;
+            fclose(f);
+        }
+        s->wifi_on = flags & 1;
+    }
     s->wifi_up = vx_read_int("/sys/class/net/wlan0/carrier", &carrier) == 0 && carrier == 1;
     s->net_up = s->wifi_up;
     if (!s->net_up) {

@@ -33,9 +33,9 @@ SYS=$OUT/sysroot
 K=$OUT/kernel
 DTB=qcom-msm8909-nokia-leo.dtb
 DIST=$OUT/vortex-nokia-6300-4g
-# console=tty0 last: boot messages show on the panel once its driver loads
-# (from the initramfs).  loglevel=7 while the port is being brought up.
-CMDLINE="earlycon console=ttyMSM0,115200 console=tty0 loglevel=7 vt.global_cursor_default=0 firmware_class.path=/run/vortex/firmware"
+# Quiet boot: the panel shows the Vortex logo (vortex-splash), kernel and
+# init messages go to the serial port and the USB debug console only.
+CMDLINE="console=ttyMSM0,115200 quiet loglevel=3 vt.global_cursor_default=0 firmware_class.path=/run/vortex/firmware"
 
 msg() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -53,6 +53,7 @@ cp "$ROOT/usr/bin/busybox.static" "$I/bin/busybox" 2>/dev/null ||
 	cp "$SYS/usr/bin/busybox.static" "$I/bin/busybox" 2>/dev/null ||
 	die "busybox.static missing (add busybox-static to the sysroot)"
 install -m755 "$TOP/tools/phone/initramfs-init" "$I/init"
+install -m755 "$ROOT/usr/libexec/vortex/vortex-splash" "$I/bin/vortex-splash"
 # Early modules, as postmarketOS' device-nokia-leo loads them: the panel (so
 # boot messages show on screen), the charger (it reports USB VBUS; without
 # it the USB controller never comes up), the fuel gauge, and the USB serial

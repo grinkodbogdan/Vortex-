@@ -2,7 +2,7 @@
 # Wi-Fi helper for the shell (wpa_supplicant + dhcpcd under runit).
 #
 #   vortex-wifi status            prints "up" or "down"
-#   vortex-wifi on|off|toggle
+#   vortex-wifi on|off|toggle     exit 2: no Wi-Fi hardware/firmware
 #   vortex-wifi scan              prints "ssid<TAB>signal%<TAB>secure" lines
 #   vortex-wifi connect SSID [PSK]
 set -eu
@@ -27,8 +27,19 @@ status)
 	fi
 	;;
 on)
+	# wlan0 appears once the Wi-Fi chip (WCNSS) has booted its firmware
+	[ -e "/sys/class/net/$IFACE" ] || {
+		echo "vortex-wifi: no $IFACE: Wi-Fi firmware not loaded (dmesg | grep -i -e wcn -e pronto)" >&2
+		exit 2
+	}
 	asroot sv up wpa_supplicant
 	asroot sv up dhcpcd
+	i=0
+	until running; do
+		i=$((i + 1))
+		[ $i -lt 50 ] || die "wpa_supplicant did not start (sv status wpa_supplicant)"
+		sleep 0.1
+	done
 	;;
 off)
 	asroot sv down dhcpcd
