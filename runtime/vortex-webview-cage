@@ -9,6 +9,10 @@ mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
 # No GPU in the VM: pixman for the compositor, llvmpipe for WebKit.
 export WLR_RENDERER=${WLR_RENDERER:-pixman} LIBGL_ALWAYS_SOFTWARE=1
 export WLR_LIBINPUT_NO_DEVICES=1 GDK_BACKEND=wayland
+# WebKit draws on the CPU: no EGL/dmabuf on the phone's display-only panel
+# device, and less memory than llvmpipe.  No accessibility bus either.
+export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+	WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 NO_AT_BRIDGE=1
 # Use the DRM device that drives a display.  On the Nokia 6300 4G the panel
 # (panel-mipi-dbi) and the Adreno GPU are separate devices.
 if [ -z "${WLR_DRM_DEVICES:-}" ]; then
@@ -19,4 +23,6 @@ if [ -z "${WLR_DRM_DEVICES:-}" ]; then
 		fi
 	done
 fi
+# what the compositor will use (shows up in the app's log)
+echo "vortex-webview-cage: drm=${WLR_DRM_DEVICES:-none} seatd=$([ -S /run/seatd.sock ] && echo yes || echo no) groups=$(id -Gn)"
 exec cage -s -- /usr/libexec/vortex/vortex-webview "$@"

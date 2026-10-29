@@ -24,7 +24,17 @@ VORTEX_WEB_CACHE=/var/cache/vortex/web
 VORTEX_SHIM=/usr/share/vortex/kaios-shim.js
 VORTEX_USER_AGENT="Mozilla/5.0 (Mobile; Nokia 6300 4G; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5.4 Vortex/0.1"
 VORTEX_EXTRA_ARGS=
+VORTEX_LOG_DIR=/var/cache/vortex/logs
 [ -r /etc/vortex/runtime.conf ] && . /etc/vortex/runtime.conf
+
+# One log per app (the previous run is kept as .old): what to look at when
+# an app does not start.
+if mkdir -p "$VORTEX_LOG_DIR" 2>/dev/null && [ -w "$VORTEX_LOG_DIR" ]; then
+	LOG=$VORTEX_LOG_DIR/$ID.log
+	[ -e "$LOG" ] && mv -f "$LOG" "$LOG.old"
+	exec >"$LOG" 2>&1
+	echo "== $(date) $ID via $VORTEX_WEB_ENGINE as $(id)"
+fi
 
 # manifest.webapp is small; flatten it and pull out launch_path.
 LAUNCH=$(tr -d '\r\n' < "$APPDIR/manifest.webapp" |
