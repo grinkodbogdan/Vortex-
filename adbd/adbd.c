@@ -58,6 +58,9 @@
 #define A_VERSION   0x01000001  /* no payload checksums needed */
 #define MAX_PAYLOAD (64 * 1024)
 #define MAX_STREAMS 32
+/* Largest USB request: the ChipIdea controller (ci_hdrc, MSM8909) and
+ * others limit one transfer to 16 KiB, as Android's adbd assumes. */
+#define USB_CHUNK   16384
 
 #define BANNER "device::ro.product.name=vortex;ro.product.model=Nokia_6300_4G;" \
                "ro.product.device=leo;features="
@@ -118,6 +121,19 @@ static struct {
     size_t rlen;
 } T = { .in_fd = -1, .out_fd = -1 };
 
+static int usb_write(const void *data, size_t n)
+{
+    const uint8_t *p = data;
+    while (n) {
+        size_t c = n < USB_CHUNK ? n : USB_CHUNK;
+        if (writex(T.out_fd, p, c) < 0)
+            return -1;
+        p += c;
+        n -= c;
+    }
+    return 0;
+}
+
 static int send_msg(uint32_t cmd, uint32_t arg0, uint32_t arg1, const void *data, uint32_t len)
 {
     struct amsg m = { cmd, arg0, arg1, len, 0, cmd ^ 0xffffffffu };
@@ -128,7 +144,7 @@ static int send_msg(uint32_t cmd, uint32_t arg0, uint32_t arg1, const void *data
         return -1;
     if (T.is_usb) {
         /* USB: header and payload are separate transfers */
-        if (writex(T.out_fd, &m, sizeof(m)) < 0 || (len && writex(T.out_fd, data, len) < 0)) {
+        if (writex(T.out_fd, &m, sizeof(m)) < 0 || (len && usb_write(data, len) < 0)) {
             logf_("USB write failed: %s", strerror(errno));
             return -1;
         }
@@ -631,7 +647,8 @@ static int usb_read_exact(uint8_t *buf, size_t n)
 {
     size_t got = 0;
     while (got < n) {
-        ssize_t r = read(U.ep_out, buf + got, n - got);
+        size_t want = n - got < USB_CHUNK ? n - got : USB_CHUNK;
+        ssize_t r = read(U.ep_out, buf + got, want);
         if (r < 0 && errno == EINTR)
             continue;
         if (r <= 0)

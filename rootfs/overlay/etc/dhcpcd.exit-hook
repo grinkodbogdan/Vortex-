@@ -1,0 +1,7 @@
+# Vortex: set the clock once the network is up (see vortex-timesync).
+# shellcheck disable=SC2154 # $reason is set by dhcpcd
+case $reason in
+BOUND|REBOOT|RENEW|INFORM)
+	/usr/libexec/vortex/vortex-timesync 2>&1 | logger -t vortex-timesync &
+	;;
+esac

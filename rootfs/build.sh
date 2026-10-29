@@ -133,7 +133,7 @@ make -s -C "$TOP/adbd" CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
 install -Dm755 "$TOP/adbd/vortex-adbd" "$ROOT/usr/libexec/vortex/vortex-adbd"
 make -s -C "$TOP/adbd" clean
 
-for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget; do
+for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync; do
 	install -Dm755 "$TOP/runtime/$f" "$ROOT/usr/libexec/vortex/$f"
 done
 install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
@@ -164,6 +164,8 @@ done
 mkdir -p "$ROOT/var/lib/vortex/apps" "$ROOT/var/lib/vortex/data" "$ROOT/var/cache/vortex/web"
 chown -R 990:990 "$ROOT/var/lib/vortex" "$ROOT/var/cache/vortex"
 touch "$ROOT/etc/vortex/.firstboot"
+# the clock never starts earlier than this (core-services/04-vortex-clock.sh)
+touch "$ROOT/etc/vortex/build-time"
 
 echo vortex > "$ROOT/etc/hostname"
 cat >> "$ROOT/etc/rc.conf" <<'EOF'

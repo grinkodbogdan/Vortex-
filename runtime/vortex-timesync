@@ -1,0 +1,17 @@
+#!/bin/sh
+# Set the clock from the network.  The Nokia 6300 4G has no clock the
+# kernel can read at boot, and HTTPS (the store, KaiOS apps) needs the right
+# date to accept certificates.  Uses the Date header of a plain HTTP request:
+# second accuracy is plenty for certificate checks, and it needs no NTP
+# daemon.  Run by dhcpcd when Wi-Fi gets an address.
+set -u
+for url in http://connectivitycheck.gstatic.com/generate_204 http://detectportal.firefox.com/ http://example.com/; do
+	d=$(curl -fsI --max-time 8 "$url" 2>/dev/null | sed -n 's/^[Dd]ate: *//p' | tr -d '\r')
+	if [ -n "$d" ] && date -u -s "$d" >/dev/null 2>&1; then
+		touch /var/lib/vortex/clock 2>/dev/null
+		echo "vortex-timesync: clock set to $(date -u) from $url"
+		exit 0
+	fi
+done
+echo "vortex-timesync: no time source reachable" >&2
+exit 1
