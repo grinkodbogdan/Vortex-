@@ -140,6 +140,18 @@ static void caps(float x, float y, const char *s)
     }
 }
 
+/* Small arrow head pointing '^', 'v', '<' or '>', centred on (cx, cy). */
+static void arrow(float cx, float cy, char dir, uint32_t col)
+{
+    const float a = 4.5f, b = 3.f;
+    switch (dir) {
+    case '^': nk_fill_triangle(cv, cx - a, cy + b, cx + a, cy + b, cx, cy - b, C(col)); break;
+    case 'v': nk_fill_triangle(cv, cx - a, cy - b, cx + a, cy - b, cx, cy + b, C(col)); break;
+    case '<': nk_fill_triangle(cv, cx + b, cy - a, cx + b, cy + a, cx - b, cy, C(col)); break;
+    default: nk_fill_triangle(cv, cx - b, cy - a, cx - b, cy + a, cx + b, cy, C(col)); break;
+    }
+}
+
 /* Thin progress bar. */
 static void meter(struct nk_rect r, int pct, uint32_t col)
 {
@@ -205,7 +217,7 @@ static void status_bar(void)
     for (int i = 0; i < 4; i++)
         fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.net_up ? T.cyan : 0x2a3444);
     if (S->job != JOB_NONE || S->store.fetch_pid > 0)
-        label(nk_rect(26, 0, 14, SB_H), "\xe2\x86\x93", f, T.cyan, AL_LEFT); /* activity */
+        arrow(31, SB_H / 2.f, 'v', T.cyan); /* download activity */
 
     /* right to left: clock, RAM, battery -- like the desktop panel */
     {
@@ -445,6 +457,9 @@ static void launch_app(int idx)
         S->dial[0] = '\0';
         push(SCR_DIALER);
         return;
+    case APP_BUILTIN_CALC:
+        push(SCR_CALC);
+        return;
     case APP_KAIOS:
         break;
     }
@@ -617,15 +632,15 @@ static void settings_value(int i, char *buf, size_t n)
     switch (i) {
     case SET_BRIGHTNESS:
         if (S->brightness >= 0)
-            snprintf(buf, n, "\xe2\x86\x90 %d%% \xe2\x86\x92", S->brightness);
+            snprintf(buf, n, "< %d%% >", S->brightness);
         else
             snprintf(buf, n, "n/a");
         break;
     case SET_TIMEOUT:
         if (S->cfg.screen_timeout)
-            snprintf(buf, n, "\xe2\x86\x90 %d s \xe2\x86\x92", S->cfg.screen_timeout);
+            snprintf(buf, n, "< %d s >", S->cfg.screen_timeout);
         else
-            snprintf(buf, n, "\xe2\x86\x90 Never \xe2\x86\x92");
+            snprintf(buf, n, "< Never >");
         break;
     case SET_WIFI:
         snprintf(buf, n, "%s", S->sys.wifi_up ? "Connected" : "Off");
@@ -830,6 +845,18 @@ static void icon_system(void)
     nk_fill_rect(cv, nk_rect(GX(4.5f), GY(19.2f), GS(15), GS(1.2f)), GS(0.6f), nk_rgba(255, 255, 255, 200));
 }
 
+static void icon_calc(void)
+{
+    const uint32_t tile = 0x7b5cd6;
+    icon_tile(tile);
+    nk_fill_rect(cv, nk_rect(GX(6), GY(3.5f), GS(12), GS(17)), GS(2), C(0xffffff));
+    nk_fill_rect(cv, nk_rect(GX(7.6f), GY(5.2f), GS(8.8f), GS(3.6f)), GS(0.8f), C(tile));
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 3; c++)
+            nk_fill_rect(cv, nk_rect(GX(7.6f + c * 3.2f), GY(10.4f + r * 3.2f), GS(2.4f), GS(2.4f)), GS(0.6f),
+                         C(r == 2 && c == 2 ? 0xf2994a : tile));
+}
+
 /* Returns 0 if `kind` has no built-in icon. */
 static int builtin_icon(enum app_kind kind, struct nk_rect r)
 {
@@ -841,6 +868,7 @@ static int builtin_icon(enum app_kind kind, struct nk_rect r)
     case APP_BUILTIN_DIALER: icon_phone(); return 1;
     case APP_BUILTIN_SETTINGS: icon_settings(); return 1;
     case APP_BUILTIN_SYSINFO: icon_system(); return 1;
+    case APP_BUILTIN_CALC: icon_calc(); return 1;
     default: return 0;
     }
 }
@@ -1107,7 +1135,7 @@ static void draw_sysinfo(void)
     if (S->sys.battery >= 0)
         ROW("Battery", "%d%%%s", S->sys.battery, S->sys.charging ? " charging" : "");
     ROW("Network", "%s", S->sys.wifi_up ? "Wi-Fi connected" : S->sys.net_up ? "connected" : "offline");
-    ROW("Apps", "%d installed", S->apps.count - 4);
+    ROW("Apps", "%d installed", S->apps.count - APPS_BUILTIN);
     ROW("Vortex", "%s", VORTEX_VERSION);
 #undef ROW
 
@@ -1134,6 +1162,173 @@ static void draw_dialer(void)
     if (S->call_active)
         label(nk_rect(0, area.y + 110, area.w, 20), "Press End to hang up", S->fonts.small, T.dim, AL_CENTER);
     softkeys(S->dial[0] ? "Clear" : NULL, "Call", "Back");
+}
+
+/* ---- calculator ------------------------------------------------------
+ * KaiOS-style: digits type, the D-pad picks the operator (up +, down -,
+ * left ×, right ÷), OK is "=", * is the decimal point, # flips the sign,
+ * C deletes a digit. */
+
+static const char *op_glyph(char op)
+{
+    switch (op) {
+    case '+': return "+";
+    case '-': return "-";
+    case '*': return "\xc3\x97";  /* × */
+    case '/': return "\xc3\xb7";  /* ÷ */
+    default: return "";
+    }
+}
+
+static void calc_format(double v, char *out, size_t n)
+{
+    if (isnan(v) || isinf(v)) {
+        snprintf(out, n, "Error");
+        return;
+    }
+    snprintf(out, n, "%.10g", v);
+}
+
+static double calc_apply(double a, char op, double b)
+{
+    switch (op) {
+    case '+': return a + b;
+    case '-': return a - b;
+    case '*': return a * b;
+    case '/': return b == 0 ? NAN : a / b;
+    default: return b;
+    }
+}
+
+static double calc_value(void)
+{
+    return S->calc_cur[0] ? strtod(S->calc_cur, NULL) : 0;
+}
+
+static void calc_reset(void)
+{
+    S->calc_cur[0] = S->calc_expr[0] = '\0';
+    S->calc_acc = 0;
+    S->calc_op = 0;
+    S->calc_fresh = 0;
+}
+
+static void calc_operator(char op)
+{
+    char a[24];
+    if (!strcmp(S->calc_cur, "Error"))
+        calc_reset();
+    if (S->calc_op && !S->calc_fresh)
+        S->calc_acc = calc_apply(S->calc_acc, S->calc_op, calc_value());
+    else if (!S->calc_op)
+        S->calc_acc = calc_value();
+    S->calc_op = op;
+    calc_format(S->calc_acc, a, sizeof(a));
+    vx_strlcpy(S->calc_cur, a, sizeof(S->calc_cur));
+    snprintf(S->calc_expr, sizeof(S->calc_expr), "%s %s", a, op_glyph(op));
+    S->calc_fresh = 1;
+}
+
+static void calc_equals(void)
+{
+    char a[24], b[24], r[24];
+    double res;
+    if (!S->calc_op || S->calc_fresh)
+        return;
+    calc_format(S->calc_acc, a, sizeof(a));
+    calc_format(calc_value(), b, sizeof(b));
+    res = calc_apply(S->calc_acc, S->calc_op, calc_value());
+    calc_format(res, r, sizeof(r));
+    snprintf(S->calc_expr, sizeof(S->calc_expr), "%s %s %s =", a, op_glyph(S->calc_op), b);
+    vx_strlcpy(S->calc_cur, r, sizeof(S->calc_cur));
+    S->calc_op = 0;
+    S->calc_fresh = 1;
+}
+
+static void key_calc(enum vx_key k)
+{
+    size_t len = strlen(S->calc_cur);
+    if (k >= VK_0 && k <= VK_9) {
+        if (S->calc_fresh || !strcmp(S->calc_cur, "Error") || !strcmp(S->calc_cur, "0")) {
+            if (S->calc_fresh && !S->calc_op)
+                S->calc_expr[0] = '\0'; /* new calculation after "=" */
+            S->calc_cur[0] = '\0';
+            len = 0;
+            S->calc_fresh = 0;
+        }
+        if (len < 15) {
+            S->calc_cur[len] = (char)('0' + (k - VK_0));
+            S->calc_cur[len + 1] = '\0';
+        }
+        return;
+    }
+    switch (k) {
+    case VK_STAR: /* decimal point */
+        if (S->calc_fresh) {
+            S->calc_cur[0] = '\0';
+            S->calc_fresh = 0;
+            len = 0;
+        }
+        if (!strchr(S->calc_cur, '.') && len < 14)
+            strcat(S->calc_cur, len ? "." : "0.");
+        break;
+    case VK_HASH: { /* sign */
+        char v[24];
+        if (!S->calc_cur[0] || !strcmp(S->calc_cur, "Error"))
+            break;
+        calc_format(-calc_value(), v, sizeof(v));
+        vx_strlcpy(S->calc_cur, v, sizeof(S->calc_cur));
+        break;
+    }
+    case VK_UP: calc_operator('+'); break;
+    case VK_DOWN: calc_operator('-'); break;
+    case VK_LEFT: calc_operator('*'); break;
+    case VK_RIGHT: calc_operator('/'); break;
+    case VK_OK: calc_equals(); break;
+    case VK_SOFT_LEFT: calc_reset(); break;
+    case VK_BACK:
+        if (len && !S->calc_fresh)
+            S->calc_cur[len - 1] = '\0';
+        else if (!len)
+            pop();
+        break;
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
+static void draw_calc(void)
+{
+    struct nk_rect area = content_rect(1);
+    static const struct { const char *key, *op; char id; } chips[] = {
+        /* "^v<>" are drawn as arrow triangles (the font has no arrows) */
+        { "^", "+", '+' }, { "v", "-", '-' }, { "<", "\xc3\x97", '*' }, { ">", "\xc3\xb7", '/' },
+        { "OK", "=", '=' }, { "*", ".", '.' }, { "#", "+/-", '#' },
+    };
+    float w = area.w, y = area.y + 8, cw = (w - 24) / 4;
+
+    header("Calculator", NULL);
+    glass(nk_rect(8, y, w - 16, 70), 8);
+    label(nk_rect(16, y + 6, w - 32, 18), S->calc_expr, S->fonts.small, T.dim, AL_RIGHT);
+    label(nk_rect(16, y + 28, w - 32, 36), S->calc_cur[0] ? S->calc_cur : "0", S->fonts.large,
+          !strcmp(S->calc_cur, "Error") ? T.warn : T.text, AL_RIGHT);
+
+    /* operator keys: what each phone key does, the pending one lit */
+    y += 84;
+    for (int i = 0; i < (int)VX_ARRAY_LEN(chips); i++) {
+        struct nk_rect r = nk_rect(8 + (i % 4) * (cw + 2.7f), y + (i / 4) * 44, cw, 38);
+        int lit = chips[i].id == S->calc_op;
+        if (lit)
+            highlight(r);
+        else
+            glass(r, 6);
+        if (i < 4)
+            arrow(r.x + r.w / 2, r.y + 11, chips[i].key[0], lit ? T.ink_dim : T.cyan);
+        else
+            label(nk_rect(r.x, r.y + 3, r.w, 16), chips[i].key, S->fonts.small, lit ? T.ink_dim : T.cyan, AL_CENTER);
+        label(nk_rect(r.x, r.y + 17, r.w, 18), chips[i].op, S->fonts.normal, T.text, AL_CENTER);
+    }
+    softkeys("Clear", "=", "Back");
 }
 
 static void draw_input(void)
@@ -1201,6 +1396,7 @@ static void draw_screen(enum screen scr)
     case SCR_WIFI: draw_wifi(); break;
     case SCR_SYSINFO: draw_sysinfo(); break;
     case SCR_DIALER: draw_dialer(); break;
+    case SCR_CALC: draw_calc(); break;
     case SCR_INPUT: draw_input(); break;
     case SCR_MENU: draw_menu(); break;
     }
@@ -1547,6 +1743,7 @@ int shell_key(struct shell *sh, const struct vx_event *ev)
             pop();
         break;
     case SCR_DIALER: key_dialer(ev->key); break;
+    case SCR_CALC: key_calc(ev->key); break;
     case SCR_INPUT: key_input(ev->key); break;
     case SCR_MENU: key_menu(ev->key); break;
     }

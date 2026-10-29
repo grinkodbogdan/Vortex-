@@ -44,6 +44,8 @@ run install    "soft_left down ok ok ok wait:300 shot:$OUT/installing.ppm wait:1
 run settings   "soft_right right right shot:$OUT/settings.ppm"
 run sysinfo    "soft_right up up ok shot:$OUT/sysinfo.ppm"
 run dialer     "1 2 3 shot:$OUT/dialer.ppm"
+# 12.5 × 4 = 50, then ÷ 0 -> Error
+run calculator "ok right right right right ok 1 2 star 5 left 4 shot:$OUT/calc-op.ppm ok shot:$OUT/calc.ppm right 0 ok shot:$OUT/calc-err.ppm"
 run power      "hold:end shot:$OUT/power.ppm"
 # the store retries by itself after a failed download: the database only
 # appears 2 s after the store is opened (like the network coming up late)
@@ -56,7 +58,7 @@ CONF=$OUT/vortex3.conf run store-retry "soft_left wait:400 shot:$OUT/store-error
 # regression: the store is unloaded while an app runs; returning to the
 # store page afterwards must not touch freed records
 CONF=$OUT/vortex2.conf run store-open "soft_left down ok ok soft_left wait:1500 wait:300 shot:$OUT/store-after-app.ppm"
-run options    "ok right right right right soft_left shot:$OUT/options.ppm down ok shot:$OUT/confirm.ppm"
+run options    "ok right right right right right soft_left shot:$OUT/options.ppm down ok shot:$OUT/confirm.ppm"
 
 # every screenshot must exist and not be blank
 for f in "$OUT"/*.ppm; do

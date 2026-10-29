@@ -106,7 +106,7 @@ See [kaios-apps.md](kaios-apps.md) for what the shim emulates.
 * **Firmware:** `core-services/01-vortex-firmware.sh` mounts the stock
   `modem` and `persist` partitions read-only before coldplug and links their
   blobs into `firmware_class.path`.
-* **Icons:** built-in apps (Banana Store, Phone, Settings, System) get
+* **Icons:** built-in apps (Banana Store, Phone, Settings, System, Calculator) get
   vector icons drawn from Nuklear primitives (`icon_*()` in `ui.c`), so they
   need no image files or icon memory. KaiOS apps use their manifest PNGs.
 * **Memory:** zram swap sized to about 40% of RAM with lz4, and

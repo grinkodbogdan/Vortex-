@@ -12,7 +12,7 @@
 enum screen {
     SCR_HOME, SCR_LAUNCHER,
     SCR_STORE, SCR_STORE_LIST, SCR_STORE_DETAIL,
-    SCR_SETTINGS, SCR_WIFI, SCR_SYSINFO, SCR_DIALER,
+    SCR_SETTINGS, SCR_WIFI, SCR_SYSINFO, SCR_DIALER, SCR_CALC,
     SCR_INPUT, SCR_MENU,
 };
 
@@ -48,6 +48,13 @@ struct shell {
     int wifi_signal[WIFI_MAX], wifi_secure[WIFI_MAX];
     char wifi_target[40];
     char dial[32];
+
+    /* calculator */
+    char calc_cur[24];             /* number being typed / shown */
+    char calc_expr[64];            /* "12 × 3 =" line above it */
+    double calc_acc;
+    char calc_op;                  /* 0 or one of + - * / */
+    int calc_fresh;                /* next digit starts a new number */
     int call_active;
 
     enum menu_kind menu;

@@ -111,6 +111,7 @@ void apps_scan(struct vx_apps *a, const char *apps_dir)
     add_builtin(a, APP_BUILTIN_DIALER, "vortex.dialer", "Phone", 0xffb4dcb9);
     add_builtin(a, APP_BUILTIN_SETTINGS, "vortex.settings", "Settings", 0xffc9d4e0);
     add_builtin(a, APP_BUILTIN_SYSINFO, "vortex.sysinfo", "System", 0xff9fb3c9);
+    add_builtin(a, APP_BUILTIN_CALC, "vortex.calculator", "Calculator", 0xffc4b2f0);
     first_kai = a->count;
 
     d = opendir(apps_dir);
