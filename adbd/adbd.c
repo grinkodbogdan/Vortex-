@@ -128,8 +128,10 @@ static int send_msg(uint32_t cmd, uint32_t arg0, uint32_t arg1, const void *data
         return -1;
     if (T.is_usb) {
         /* USB: header and payload are separate transfers */
-        if (writex(T.out_fd, &m, sizeof(m)) < 0 || (len && writex(T.out_fd, data, len) < 0))
+        if (writex(T.out_fd, &m, sizeof(m)) < 0 || (len && writex(T.out_fd, data, len) < 0)) {
+            logf_("USB write failed: %s", strerror(errno));
             return -1;
+        }
         return 0;
     }
     {
@@ -487,6 +489,7 @@ static void handle(const struct amsg *m, uint8_t *data)
 
     switch (m->cmd) {
     case A_CNXN:
+        logf_("CNXN from host: version %08x, max payload %u", m->arg0, m->arg1);
         close_all_streams();
         T.connected = 1;
         send_msg(A_CNXN, A_VERSION, MAX_PAYLOAD, BANNER, sizeof(BANNER) - 1);
@@ -499,6 +502,7 @@ static void handle(const struct amsg *m, uint8_t *data)
         int fd, slot = -1;
         memcpy(svc, data, n);
         svc[n] = 0;
+        logf_("open %s", svc);
         for (int i = 0; i < MAX_STREAMS && slot < 0; i++)
             if (S[i].fd < 0)
                 slot = i;
@@ -620,18 +624,48 @@ static struct {
     int pipe_w;  /* reader thread -> poll loop */
 } U = { -1, -1, -1, -1 };
 
+/* Read one USB transfer of exactly n bytes (header or payload), like
+ * Android's adbd: the request then always ends where the host's transfer
+ * does, whatever the controller does with short packets. */
+static int usb_read_exact(uint8_t *buf, size_t n)
+{
+    size_t got = 0;
+    while (got < n) {
+        ssize_t r = read(U.ep_out, buf + got, n - got);
+        if (r < 0 && errno == EINTR)
+            continue;
+        if (r <= 0)
+            return -1;
+        got += (size_t)r;
+    }
+    return 0;
+}
+
 static void *usb_reader(void *unused)
 {
     static uint8_t buf[MAX_PAYLOAD + sizeof(struct amsg)];
+    int errors = 0;
     (void)unused;
     for (;;) {
-        ssize_t n = read(U.ep_out, buf, sizeof(buf));
-        if (n > 0) {
-            if (writex(U.pipe_w, buf, (size_t)n) < 0)
-                return NULL;
-        } else {
+        struct amsg m;
+        if (usb_read_exact(buf, sizeof(m)) < 0) {
+            if (errors++ == 0)
+                logf_("USB read failed: %s", strerror(errno));
             usleep(100000);  /* not enabled / cable out */
+            continue;
         }
+        errors = 0;
+        memcpy(&m, buf, sizeof(m));
+        if (m.magic != (m.cmd ^ 0xffffffffu) || m.len > MAX_PAYLOAD) {
+            logf_("USB: bad header %08x, dropped", m.cmd);
+            continue;
+        }
+        if (m.len && usb_read_exact(buf + sizeof(m), m.len) < 0) {
+            logf_("USB payload read failed: %s", strerror(errno));
+            continue;
+        }
+        if (writex(U.pipe_w, buf, sizeof(m) + m.len) < 0)
+            return NULL;
     }
     return NULL;
 }

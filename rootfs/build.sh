@@ -140,7 +140,9 @@ install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
 install -Dm755 "$TOP/runtime/vortex-power" "$ROOT/usr/bin/vortex-power"
 install -Dm644 "$TOP/runtime/kaios-shim.js" "$ROOT/usr/share/vortex/kaios-shim.js"
 install -Dm644 "$TOP/assets/fonts/Roboto-Regular.ttf" "$ROOT/usr/share/vortex/fonts/Roboto-Regular.ttf"
-cp -a "$HERE/overlay/." "$ROOT/"
+# root-owned, whoever checked the tree out (doas refuses a doas.conf that
+# root does not own; the CI runner's checkout belongs to uid 1001)
+cp -a --no-preserve=ownership "$HERE/overlay/." "$ROOT/"
 chmod 600 "$ROOT/etc/doas.conf"
 cat >> "$ROOT/etc/vortex/runtime.conf" <<'EOF'
 
