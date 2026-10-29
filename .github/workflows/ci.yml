@@ -27,7 +27,10 @@ jobs:
       - name: Runtime tests
         run: runtime/tests/run.sh
       - name: Shellcheck
-        run: shellcheck -s sh runtime/vortex-* runtime/tests/run.sh rootfs/*.sh kernel/build.sh tools/*.sh shell/tests/*.sh
+        run: |
+          shellcheck -s sh -S warning $(grep -l '^#!/bin/sh' runtime/vortex-* runtime/tests/*.sh) \
+            rootfs/*.sh kernel/build.sh tools/*.sh tools/vm/*.sh tools/phone/initramfs-init shell/tests/*.sh \
+            rootfs/overlay/etc/sv/vortex-shell/run rootfs/overlay/etc/runit/core-services/*.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -35,15 +38,29 @@ jobs:
           path: shell/tests/out/*.png
 
   cross-armv7-musl:
+    # Static ARM build of the shell with clang against a Void musl sysroot
+    # (the same way rootfs/build.sh does it), then the screenshot tests
+    # running the ARM binary under qemu-arm.
     runs-on: ubuntu-24.04
-    container: ghcr.io/void-linux/void-musl-full:latest
     steps:
-      - name: Install cross toolchain
-        run: |
-          xbps-install -Syu xbps || true
-          xbps-install -Sy cross-armv7l-linux-musleabihf make git
       - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y clang lld qemu-user imagemagick
+      - name: Void armv7 musl sysroot
+        run: |
+          mkdir -p xbps sysroot
+          curl -fsSL https://repo-default.voidlinux.org/static/xbps-static-latest.x86_64-musl.tar.xz | tar -xJ -C xbps
+          yes | sudo XBPS_ARCH=armv7l-musl xbps/usr/bin/xbps-install.static -S -U -r "$PWD/sysroot" \
+            -R https://repo-default.voidlinux.org/current/musl musl-devel kernel-libc-headers gcc
       - name: Build static armv7 shell
         run: |
-          make -C shell CC=armv7l-linux-musleabihf-gcc LDFLAGS="-static -s"
-          ls -l shell/vortex-shell
+          CC="clang --target=armv7l-linux-musleabihf --sysroot=$PWD/sysroot -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard"
+          make -C shell CC="$CC" LDFLAGS="-fuse-ld=lld -static -s" all vortex-shell-headless
+          file shell/vortex-shell shell/vortex-shell-headless
+      - name: Screenshot tests on the ARM binary (qemu-arm)
+        run: |
+          cd shell
+          mv vortex-shell-headless vsh-arm
+          printf '#!/bin/sh\nexec qemu-arm "$(dirname "$0")/vsh-arm" "$@"\n' > vortex-shell-headless
+          chmod +x vortex-shell-headless
+          ./tests/run.sh

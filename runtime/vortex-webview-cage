@@ -5,7 +5,7 @@
 set -eu
 : "${XDG_RUNTIME_DIR:=/tmp/vortex-runtime-$(id -u)}"
 export XDG_RUNTIME_DIR
-mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
 # No GPU in the VM: pixman for the compositor, llvmpipe for WebKit.
 export WLR_RENDERER=${WLR_RENDERER:-pixman} LIBGL_ALWAYS_SOFTWARE=1
 export WLR_LIBINPUT_NO_DEVICES=1 GDK_BACKEND=wayland

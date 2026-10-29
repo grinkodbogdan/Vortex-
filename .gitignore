@@ -6,3 +6,4 @@ out/
 work/
 *.o
 node_modules/
+downloads/

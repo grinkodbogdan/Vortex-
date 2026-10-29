@@ -66,6 +66,7 @@ xbps_unpack() { # ROOTDIR PKG...
 
 msg "unpacking Void armv7l-musl packages (not configured until first boot)"
 rm -rf "$ROOT"
+# shellcheck disable=SC2046 # the package list is meant to be split
 xbps_unpack "$ROOT" $(sed 's/#.*//' "$HERE/packages.txt")
 [ -e "$ROOT/usr/bin/sh" ] || ln -s dash "$ROOT/usr/bin/sh"
 

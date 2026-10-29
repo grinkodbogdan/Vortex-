@@ -1,0 +1,64 @@
+name: phone-image
+
+# Build the flashable Nokia 6300 4G images and publish them as a GitHub
+# Release.  Run it from the Actions tab ("Run workflow").
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        default: v0.1.0-alpha1
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld android-sdk-libsparse-utils fdisk e2fsprogs xz-utils python3
+
+      - name: Build root filesystem (Void armv7l-musl + postmarketOS kernel)
+        run: sudo MIRROR=https://repo-de.voidlinux.org rootfs/build.sh
+
+      - name: Make images
+        run: sudo rootfs/mkimage.sh
+
+      - name: Compress large images
+        run: |
+          cd out/phone/vortex-nokia-6300-4g
+          sudo chown -R "$(id -u)" .
+          xz -T0 -6 userdata.img vortex-sdcard.img vortex-rootfs.simg
+          sha256sum boot-partition.img lk2nd.img vortex-boot.img userdata.img.xz \
+            vortex-sdcard.img.xz vortex-rootfs.simg.xz > SHA256SUMS
+          ls -la
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          cd out/phone/vortex-nokia-6300-4g
+          cat > notes.md <<'EOF'
+          **Experimental: not yet booted on real hardware.** Back up every partition before flashing; see FLASHING.md.
+
+          | File | Flash to |
+          |---|---|
+          | `boot-partition.img` | `boot` partition (EDL): lk2nd + Vortex kernel |
+          | `userdata.img.xz` | `userdata` partition (EDL), after `unxz` (replaces KaiOS) |
+          | `vortex-sdcard.img.xz` | or a microSD card (`unxz`, then write to the card); then only `boot` changes |
+          | `lk2nd.img`, `vortex-boot.img`, `vortex-rootfs.simg.xz` | the same pieces for lk2nd fastboot |
+
+          Kernel: postmarketOS linux-postmarketos-qcom-msm8916 6.12.1 (MSM8909, nokia-leo device tree). Bootloader: postmarketOS lk2nd-msm8916 23.1. The first boot takes several minutes (package setup).
+          EOF
+          gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
+            --title "Vortex $TAG for Nokia 6300 4G (experimental)" --notes-file notes.md \
+            boot-partition.img lk2nd.img vortex-boot.img userdata.img.xz vortex-sdcard.img.xz \
+            vortex-rootfs.simg.xz FLASHING.md SHA256SUMS

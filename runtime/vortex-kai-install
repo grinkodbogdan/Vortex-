@@ -22,7 +22,7 @@ APPS_DIR=${APPS_DIR:-/var/lib/vortex/apps}
 SHIM=${VORTEX_SHIM:-/usr/share/vortex/kaios-shim.js}
 MAX_SIZE=${VORTEX_MAX_PACKAGE:-67108864}   # 64 MiB
 
-ID= NAME= TYPE=packaged URL= FILE=
+ID='' NAME='' TYPE=packaged URL='' FILE=''
 while [ $# -gt 0 ]; do
 	case $1 in
 	--id) ID=$2; shift 2 ;;
