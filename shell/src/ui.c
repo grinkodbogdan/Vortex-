@@ -737,6 +737,114 @@ static void draw_home(void)
     softkeys("Store", "Menu", "Settings");
 }
 
+/* ---- built-in app icons ------------------------------------------------
+ * Drawn from primitives on a 24x24 grid, so they cost no image memory and
+ * scale to any tile size.  Each is a tinted rounded tile with a white glyph. */
+
+static float ic_x, ic_y, ic_s;          /* tile origin and size */
+#define GX(v) (ic_x + (v) * ic_s / 24.f)
+#define GY(v) (ic_y + (v) * ic_s / 24.f)
+#define GS(v) ((v) * ic_s / 24.f)
+
+static void ic_circle(float cx, float cy, float r, uint32_t col)
+{
+    nk_fill_circle(cv, nk_rect(GX(cx - r), GY(cy - r), GS(2 * r), GS(2 * r)), C(col));
+}
+
+static void ic_poly(const float *pts, int n, uint32_t col)
+{
+    float buf[64];
+    for (int i = 0; i < n && i < 32; i++) {
+        buf[2 * i] = GX(pts[2 * i]);
+        buf[2 * i + 1] = GY(pts[2 * i + 1]);
+    }
+    nk_fill_polygon(cv, buf, n, C(col));
+}
+
+static void icon_tile(uint32_t base)
+{
+    float r = GS(5);
+    nk_fill_rect(cv, nk_rect(ic_x, ic_y, ic_s, ic_s), r, C(base));
+    /* soft sheen on the upper half, darker rim at the bottom */
+    nk_fill_rect(cv, nk_rect(ic_x + 1, ic_y + 1, ic_s - 2, ic_s * 0.48f), r, nk_rgba(255, 255, 255, 46));
+    nk_fill_rect(cv, nk_rect(ic_x + GS(3), ic_y + ic_s - 2, ic_s - GS(6), 2), 1, nk_rgba(0, 0, 0, 50));
+}
+
+static void icon_store(void)
+{
+    icon_tile(0xe8a22c);
+    /* bag handle: a ring whose lower half hides behind the bag */
+    nk_stroke_circle(cv, nk_rect(GX(8.6f), GY(4.6f), GS(6.8f), GS(6.8f)), GS(1.6f), C(0xffffff));
+    nk_fill_rect(cv, nk_rect(GX(5), GY(8), GS(14), GS(12)), GS(2), C(0xffffff));
+    /* banana: a thick yellow arc with brown tips */
+    {
+        float pts[2 * 9];
+        for (int i = 0; i < 9; i++) {
+            float a = (25.f + i * 16.25f) * 3.14159265f / 180.f;
+            pts[2 * i] = GX(12 + 4.6f * cosf(a));
+            pts[2 * i + 1] = GY(10.2f + 4.6f * sinf(a));
+        }
+        nk_stroke_polyline(cv, pts, 9, GS(2.6f), C(0xf7c825));
+        ic_circle(12 + 4.6f * cosf(0.436f), 10.2f + 4.6f * sinf(0.436f), 0.9f, 0x6b4310);
+        ic_circle(12 - 4.6f * cosf(0.436f), 10.2f + 4.6f * sinf(0.436f), 0.9f, 0x6b4310);
+    }
+}
+
+static void icon_phone(void)
+{
+    /* handset, simplified from the familiar "call" glyph */
+    static const float handset[] = {
+        4.0f, 3.2f, 7.4f, 3.2f, 8.4f, 4.2f, 9.0f, 7.6f, 8.7f, 8.6f, 6.6f, 10.8f,
+        8.6f, 13.8f, 10.2f, 15.4f, 13.2f, 17.4f, 15.4f, 15.3f, 16.4f, 15.0f,
+        19.8f, 15.6f, 20.8f, 16.6f, 20.8f, 19.8f, 19.8f, 20.8f, 16.8f, 20.6f,
+        13.0f, 19.5f, 9.5f, 17.5f, 6.4f, 14.6f, 4.4f, 11.0f, 3.2f, 7.0f, 3.1f, 4.2f,
+    };
+    icon_tile(0x29b36a);
+    ic_poly(handset, (int)(VX_ARRAY_LEN(handset) / 2), 0xffffff);
+}
+
+static void icon_settings(void)
+{
+    const uint32_t tile = 0x557497;
+    icon_tile(tile);
+    for (int i = 0; i < 8; i++) {
+        float a = i * 3.14159265f / 4, ca = cosf(a), sa = sinf(a);
+        /* tooth: a small square pushed out along angle a */
+        float px[4] = { -1.7f, 1.7f, 1.7f, -1.7f }, py[4] = { 5.0f, 5.0f, 8.4f, 8.4f }, pts[8];
+        for (int k = 0; k < 4; k++) {
+            pts[2 * k] = 12 + px[k] * ca - py[k] * sa;
+            pts[2 * k + 1] = 12 + px[k] * sa + py[k] * ca;
+        }
+        ic_poly(pts, 4, 0xffffff);
+    }
+    ic_circle(12, 12, 6.2f, 0xffffff);
+    ic_circle(12, 12, 2.6f, tile);
+}
+
+static void icon_system(void)
+{
+    static const float h[] = { 5, 9, 13 };
+    icon_tile(0x2a86de);
+    for (int i = 0; i < 3; i++)
+        nk_fill_rect(cv, nk_rect(GX(5.5f + i * 4.8f), GY(18.5f - h[i]), GS(3.4f), GS(h[i])), GS(1), C(0xffffff));
+    nk_fill_rect(cv, nk_rect(GX(4.5f), GY(19.2f), GS(15), GS(1.2f)), GS(0.6f), nk_rgba(255, 255, 255, 200));
+}
+
+/* Returns 0 if `kind` has no built-in icon. */
+static int builtin_icon(enum app_kind kind, struct nk_rect r)
+{
+    ic_x = r.x;
+    ic_y = r.y;
+    ic_s = r.w;
+    switch (kind) {
+    case APP_BUILTIN_STORE: icon_store(); return 1;
+    case APP_BUILTIN_DIALER: icon_phone(); return 1;
+    case APP_BUILTIN_SETTINGS: icon_settings(); return 1;
+    case APP_BUILTIN_SYSINFO: icon_system(); return 1;
+    default: return 0;
+    }
+}
+
 #define GRID_COLS 3
 
 static void draw_launcher(void)
@@ -768,8 +876,10 @@ static void draw_launcher(void)
                 fill_a(fr, 10, T.accent, 70);
                 nk_stroke_rect(cv, fr, 10, 2, C(0x5aaef5));
             }
-            icon = apps_icon(&S->apps, i, (int)isz);
-            if (icon) {
+            icon = a->kind == APP_KAIOS ? apps_icon(&S->apps, i, (int)isz) : NULL;
+            if (builtin_icon(a->kind, nk_rect(ix, iy, isz, isz))) {
+                /* vector icon drawn above */
+            } else if (icon) {
                 struct nk_image img = nk_image_ptr(icon);
                 nk_draw_image(cv, nk_rect(ix, iy, isz, isz), &img, nk_rgb(255, 255, 255));
             } else {
