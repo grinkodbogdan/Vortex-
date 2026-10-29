@@ -497,7 +497,8 @@ static void menu_select(void)
     switch (k) {
     case MENU_POWER:
         if (sel == 0 || sel == 1) {
-            argv[0] = sel == 0 ? "poweroff" : "reboot";
+            argv[0] = "vortex-power";
+            argv[1] = sel == 0 ? "off" : "reboot";
             spawn_detached(argv);
         }
         break;
@@ -656,13 +657,13 @@ static void draw_launcher(void)
             } else {
                 /* Letter tile for apps without a PNG icon. */
                 char letter[5] = { 0 };
-                int n = nk_utf_len(a->name, 1) > 0 ? 1 : 0;
-                nk_rune cp;
-                int bl = n ? nk_utf_decode(a->name, &cp, (int)strlen(a->name)) : 0;
+                nk_rune cp = 0;
+                int bl = nk_utf_decode(a->name, &cp, (int)strlen(a->name));
                 memcpy(letter, a->name, (size_t)(bl > 0 && bl < 5 ? bl : 0));
                 nk_fill_rect(cv, nk_rect(ix, iy, isz, isz), 10,
                              nk_rgb((a->color >> 16) & 0xff, (a->color >> 8) & 0xff, a->color & 0xff));
-                label(nk_rect(ix, iy, isz, isz), letter, S->fonts.large, 0xffffff, AL_CENTER);
+                label(nk_rect(ix, iy, isz, isz), letter, cp <= 0xff ? S->fonts.large : S->fonts.normal,
+                      0xffffff, AL_CENTER);
             }
             label(nk_rect(cell.x + 2, iy + isz + 4, cw - 4, 18), a->name, S->fonts.small,
                   i == S->launcher_sel ? 0xffffff : T.text, AL_CENTER);

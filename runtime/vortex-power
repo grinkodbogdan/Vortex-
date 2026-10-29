@@ -1,0 +1,10 @@
+#!/bin/sh
+# Power off or restart; used by the shell's power menu.
+#   vortex-power off|reboot
+set -eu
+asroot() { if [ "$(id -u)" = 0 ]; then "$@"; else doas "$@"; fi; }
+case ${1:-} in
+off) sync; asroot poweroff ;;
+reboot) sync; asroot reboot ;;
+*) echo "usage: vortex-power off|reboot" >&2; exit 2 ;;
+esac

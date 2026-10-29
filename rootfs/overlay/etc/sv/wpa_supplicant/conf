@@ -1,0 +1,3 @@
+# Used by Void's /etc/sv/wpa_supplicant/run
+WPA_INTERFACE=wlan0
+CONF_FILE=/etc/wpa_supplicant/wpa_supplicant.conf

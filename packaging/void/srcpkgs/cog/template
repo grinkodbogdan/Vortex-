@@ -1,0 +1,25 @@
+# Template file for 'cog'
+#
+# Single-window WPE WebKit launcher; vortex-kai-run starts one per KaiOS app
+# on the DRM/KMS platform.  patches/quit-on-window-close.patch makes
+# window.close() exit Cog, which is how KaiOS apps quit.
+pkgname=cog
+version=0.18.5
+revision=1
+build_style=meson
+configure_args="-Dplatforms=drm,headless -Dprograms=true -Dmanpages=false
+ -Ddocumentation=false -Dwpe_api=2.0 -Dlibmanette=disabled"
+hostmakedepends="pkg-config glib-devel wayland-devel"
+makedepends="wpewebkit-devel libwpe-devel wpebackend-fdo-devel
+ libdrm-devel MesaLib-devel libinput-devel libxkbcommon-devel
+ libepoxy-devel eudev-libudev-devel wayland-devel wayland-protocols"
+short_desc="Small single \"window\" launcher for WPE WebKit"
+maintainer="Vortex <vortex@localhost>"
+license="MIT"
+homepage="https://github.com/Igalia/cog"
+distfiles="https://wpewebkit.org/releases/cog-${version}.tar.xz"
+checksum=0ede9d09ab635ac519beec0543378e3fc51b56561a5fb7aa9c0cbca54c31b97c
+
+post_install() {
+	vlicense COPYING
+}

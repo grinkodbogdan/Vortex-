@@ -14,7 +14,7 @@ struct vx_image {
 struct vx_fonts {
     struct nk_font *small;   /* status bar, soft keys, captions */
     struct nk_font *normal;  /* lists, body text */
-    struct nk_font *large;   /* screen titles */
+    struct nk_font *large;   /* big UI text (Latin-1 only) */
     struct nk_font *clock;   /* home screen clock: digits only */
 };
 

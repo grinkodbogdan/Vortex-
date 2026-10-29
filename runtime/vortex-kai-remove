@@ -1,0 +1,23 @@
+#!/bin/sh
+# Remove an installed KaiOS app and its private web data.
+#   vortex-kai-remove ID
+set -eu
+
+die() { echo "vortex-kai-remove: $*" >&2; exit 1; }
+
+CONF=${VORTEX_CONF:-/etc/vortex/vortex.conf}
+conf() { [ -r "$CONF" ] && sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CONF" | tail -n 1; }
+
+APPS_DIR=${VORTEX_APPS_DIR:-$(conf apps_dir)}
+APPS_DIR=${APPS_DIR:-/var/lib/vortex/apps}
+DATA_DIR=${VORTEX_DATA_DIR:-/var/lib/vortex/data}
+CACHE_DIR=${VORTEX_WEB_CACHE:-/var/cache/vortex/web}
+
+ID=${1:-}
+case $ID in
+''|.*|*[!A-Za-z0-9._-]*) die "invalid app id '$ID'" ;;
+esac
+[ -d "$APPS_DIR/$ID" ] || die "$ID is not installed"
+
+rm -rf "${APPS_DIR:?}/$ID" "${DATA_DIR:?}/$ID" "${CACHE_DIR:?}/$ID"
+echo "removed $ID"

@@ -1,0 +1,38 @@
+#!/bin/sh
+# Voice calls through oFono (system D-Bus).
+#
+#   vortex-call dial NUMBER
+#   vortex-call hangup
+#
+# Experimental: on MSM8909 the modem is reached over QRTR (rmtfs, qrtr-ns,
+# pd-mapper, tqftpserv must be running) and call audio still needs an ALSA
+# UCM profile for the phone; see docs/device-nokia-6300-4g.md.
+set -eu
+
+die() { echo "vortex-call: $*" >&2; exit 1; }
+
+ofono() {
+	dbus-send --system --print-reply --dest=org.ofono "$@"
+}
+
+modem() {
+	ofono / org.ofono.Manager.GetModems 2>/dev/null |
+		sed -n 's/^.*object path "\([^"]*\)".*$/\1/p' | head -n 1
+}
+
+M=$(modem)
+[ -n "$M" ] || die "no modem (is ofono running?)"
+
+case ${1:-} in
+dial)
+	NUM=${2:?number}
+	case $NUM in *[!0-9+*#]*) die "invalid number" ;; esac
+	ofono "$M" org.ofono.VoiceCallManager.Dial string:"$NUM" string:"default" >/dev/null
+	;;
+hangup)
+	ofono "$M" org.ofono.VoiceCallManager.HangupAll >/dev/null
+	;;
+*)
+	die "usage: vortex-call dial NUMBER | hangup"
+	;;
+esac

@@ -1,0 +1,14 @@
+--- a/core/cog-shell.c
++++ b/core/cog-shell.c
+@@ -155,6 +155,11 @@
+ cog_shell_web_view_close(WebKitWebView *view, CogShell *shell)
+ {
+     g_object_unref(view);
++
++    /* Vortex: a KaiOS app closing its window means "exit the app". */
++    GApplication *app = g_application_get_default();
++    if (app)
++        g_application_quit(app);
+ }
+ 
+ static void

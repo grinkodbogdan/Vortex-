@@ -329,10 +329,13 @@ struct vx_image *gfx_image_new(int w, int h)
 
 int gfx_load_fonts(const char *ttf_path, int base, struct vx_fonts *out)
 {
-    /* Latin-1, Latin Extended-A, Greek, Cyrillic: covers the names and
-     * descriptions of nearly every app in the BananaHackers store. */
+    /* Body text: Latin-1, Latin Extended-A and Cyrillic cover the names
+     * and descriptions of nearly every app in the BananaHackers store.
+     * The other sizes only show our own UI strings.  Nuklear doubles the
+     * atlas width above 1000 glyphs, so the total stays just under that
+     * (atlas: 512 px wide instead of 1024). */
     static const nk_rune text_ranges[] = {
-        0x0020, 0x00FF, 0x0100, 0x017F, 0x0370, 0x03FF, 0x0400, 0x045F,
+        0x0020, 0x00FF, 0x0100, 0x017F, 0x0400, 0x045F,
         0x2010, 0x2027, 0x20AC, 0x20AC, 0x2190, 0x2193, 0,
     };
     static const nk_rune ui_ranges[] = { 0x0020, 0x00FF, 0x2010, 0x2027, 0x2190, 0x2193, 0 };
@@ -340,7 +343,7 @@ int gfx_load_fonts(const char *ttf_path, int base, struct vx_fonts *out)
     struct { struct nk_font **slot; float size; const nk_rune *range; } want[] = {
         { &out->small, base - 3.f, ui_ranges },
         { &out->normal, (float)base, text_ranges },
-        { &out->large, base + 4.f, text_ranges },
+        { &out->large, base + 4.f, ui_ranges },
         { &out->clock, base * 3.f, clock_ranges },
     };
     size_t ttf_len;
@@ -379,6 +382,7 @@ int gfx_load_fonts(const char *ttf_path, int base, struct vx_fonts *out)
         return -1;
     }
     memcpy(G.atlas, px, (size_t)G.aw * G.ah);
+    fprintf(stderr, "vortex: font atlas %dx%d (%d KB)\n", G.aw, G.ah, G.aw * G.ah / 1024);
     /* end() frees the atlas' own pixel copy; the shared ttf blob we free
      * here.  nk_font_atlas_cleanup() is not used because it would free
      * that blob once per font. */

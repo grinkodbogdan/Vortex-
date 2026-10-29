@@ -5,3 +5,4 @@ shell/tests/out/
 out/
 work/
 *.o
+node_modules/

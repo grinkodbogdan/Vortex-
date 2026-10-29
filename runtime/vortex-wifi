@@ -1,0 +1,79 @@
+#!/bin/sh
+# Wi-Fi helper for the shell (wpa_supplicant + dhcpcd under runit).
+#
+#   vortex-wifi status            prints "up" or "down"
+#   vortex-wifi on|off|toggle
+#   vortex-wifi scan              prints "ssid<TAB>signal%<TAB>secure" lines
+#   vortex-wifi connect SSID [PSK]
+set -eu
+
+IFACE=${VORTEX_WIFI_IFACE:-wlan0}
+WPA="wpa_cli -i $IFACE"
+
+die() { echo "vortex-wifi: $*" >&2; exit 1; }
+
+# Service control needs root; the shell runs as an unprivileged user and
+# goes through doas (see /etc/doas.conf).
+asroot() { if [ "$(id -u)" = 0 ]; then "$@"; else doas "$@"; fi; }
+
+running() { $WPA status >/dev/null 2>&1; }
+
+case ${1:-} in
+status)
+	if running && [ "$(cat /sys/class/net/$IFACE/carrier 2>/dev/null)" = 1 ]; then
+		echo up
+	else
+		echo down
+	fi
+	;;
+on)
+	asroot sv up wpa_supplicant
+	asroot sv up dhcpcd
+	;;
+off)
+	asroot sv down dhcpcd
+	asroot sv down wpa_supplicant
+	;;
+toggle)
+	if running; then exec "$0" off; else exec "$0" on; fi
+	;;
+scan)
+	running || { "$0" on; sleep 2; }
+	$WPA scan >/dev/null
+	sleep 4
+	# bssid / frequency / signal level / flags / ssid
+	$WPA scan_results | awk -F '\t' 'NR > 1 && $5 != "" {
+		pct = 2 * ($3 + 100); if (pct > 100) pct = 100; if (pct < 0) pct = 0
+		sec = ($4 ~ /WPA|WEP|SAE/) ? 1 : 0
+		if (!($5 in best) || pct > best[$5]) { best[$5] = pct; secure[$5] = sec }
+	} END { for (s in best) printf "%s\t%d\t%d\n", s, best[s], secure[s] }' | sort -t "$(printf '\t')" -k2,2nr
+	;;
+connect)
+	SSID=${2:?ssid}
+	PSK=${3:-}
+	running || { "$0" on; sleep 2; }
+	id=$($WPA add_network | tail -n 1)
+	# hex SSID avoids any quoting problems
+	$WPA set_network "$id" ssid "$(printf '%s' "$SSID" | od -An -tx1 | tr -d ' \n')" >/dev/null
+	if [ -n "$PSK" ]; then
+		$WPA set_network "$id" psk "\"$PSK\"" >/dev/null
+	else
+		$WPA set_network "$id" key_mgmt NONE >/dev/null
+	fi
+	$WPA select_network "$id" >/dev/null
+	$WPA save_config >/dev/null || true
+	i=0
+	while [ $i -lt 30 ]; do
+		if $WPA status | grep -q '^wpa_state=COMPLETED'; then
+			exit 0
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	$WPA remove_network "$id" >/dev/null || true
+	die "could not associate with $SSID"
+	;;
+*)
+	die "usage: vortex-wifi status|on|off|toggle|scan|connect SSID [PSK]"
+	;;
+esac

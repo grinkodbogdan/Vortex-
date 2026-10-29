@@ -1,0 +1,79 @@
+# Template file for 'wpewebkit'
+#
+# WPE port of WebKit, the engine Vortex runs KaiOS apps in.  Void ships the
+# GTK port only; this template is modelled on srcpkgs/libwebkit2gtk41 and
+# trimmed for a 512 MB phone: no WebGL/ANGLE, no WebDriver, no
+# introspection, no sandbox (apps are already confined to their own
+# data dirs and the runtime runs unprivileged).
+#
+# Status: not yet built in CI.  Expect to iterate on configure flags when
+# bumping versions; unknown -D options only cause a CMake warning.
+pkgname=wpewebkit
+version=2.50.4
+revision=1
+build_style=cmake
+configure_args="-DPORT=WPE
+ -DCMAKE_LINKER=${XBPS_CROSS_TRIPLET}-gcc -DCMAKE_SKIP_RPATH=ON
+ -DENABLE_DOCUMENTATION=OFF -DENABLE_INTROSPECTION=OFF
+ -DENABLE_WEBDRIVER=OFF -DENABLE_MINIBROWSER=OFF
+ -DENABLE_JOURNALD_LOG=OFF -DENABLE_BUBBLEWRAP_SANDBOX=OFF
+ -DENABLE_SPEECH_SYNTHESIS=OFF -DENABLE_WEBGL=OFF
+ -DENABLE_WEBASSEMBLY=OFF -DENABLE_C_LOOP=ON -DENABLE_JIT=OFF
+ -DENABLE_SAMPLING_PROFILER=OFF
+ -DUSE_AVIF=OFF -DUSE_JPEGXL=OFF -DUSE_LCMS=OFF -DUSE_LIBBACKTRACE=OFF
+ -DUSE_WOFF2=ON
+ $(vopt_bool media ENABLE_VIDEO) $(vopt_bool media ENABLE_WEB_AUDIO)
+ $(vopt_bool media USE_GSTREAMER)"
+hostmakedepends="perl python3 pkg-config gperf flex ruby gettext glib-devel
+ which unifdef wayland-devel libxml2-devel"
+makedepends="libwpe-devel wpebackend-fdo-devel libsoup3-devel harfbuzz-devel
+ icu-devel libxslt-devel sqlite-devel libepoxy-devel MesaLib-devel
+ libdrm-devel libinput-devel libxkbcommon-devel libwebp-devel
+ libjpeg-turbo-devel libpng-devel woff2-devel freetype-devel
+ fontconfig-devel libgcrypt-devel libtasn1-devel libpsl-devel
+ wayland-devel wayland-protocols libgudev-devel
+ $(vopt_if media 'gst-plugins-base1-devel gst-plugins-bad1-devel')"
+depends="$(vopt_if media 'gst-plugins-good1')"
+short_desc="WPE port of the WebKit browser engine for embedded devices"
+maintainer="Vortex <vortex@localhost>"
+license="LGPL-2.1-or-later, BSD-2-Clause"
+homepage="https://wpewebkit.org/"
+distfiles="https://wpewebkit.org/releases/wpewebkit-${version}.tar.xz"
+checksum=d204e405b0975508748c0273c18090304a979e1170ffa2a0a528fad90191ef87
+make_check=no
+
+build_options="media"
+build_options_default="media"
+desc_option_media="HTML5 audio/video through GStreamer (podcast/music apps)"
+
+export CFLAGS="-DNDEBUG"
+export CXXFLAGS="$CFLAGS"
+export CCACHE_SLOPPINESS=time_macros,include_file_mtime
+
+pre_configure() {
+	# Debug info for WebKit is huge; keep it minimal.
+	export CFLAGS="${CFLAGS/-g/-g1}"
+	export CXXFLAGS="${CXXFLAGS/-g/-g1}"
+	if [ "$XBPS_WORDSIZE" = "32" ]; then
+		# armv7: the final link otherwise runs out of address space
+		export LDFLAGS+=" -Wl,--no-keep-memory"
+		export CFLAGS="${CFLAGS/-O2/-Os}"
+		export CXXFLAGS="${CXXFLAGS/-O2/-Os}"
+	fi
+}
+
+post_install() {
+	vlicense Source/WebCore/LICENSE-APPLE
+	vlicense Source/WebCore/LICENSE-LGPL-2.1
+	vlicense Source/WebCore/LICENSE-LGPL-2
+}
+
+wpewebkit-devel_package() {
+	depends="libwpe-devel libsoup3-devel ${sourcepkg}>=${version}_${revision}"
+	short_desc+=" - development files"
+	pkg_install() {
+		vmove usr/include
+		vmove usr/lib/pkgconfig
+		vmove "usr/lib/*.so"
+	}
+}

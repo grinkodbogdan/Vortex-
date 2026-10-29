@@ -1,0 +1,55 @@
+# Packages installed into the Vortex root filesystem (armv7l-musl).
+# One per line; '#' starts a comment.  Keep this list short: every daemon
+# that stays resident costs RAM on a 512 MB phone.
+
+# Base system: runit init, musl, coreutils & friends
+base-files
+runit-void
+musl
+coreutils
+findutils
+grep
+sed
+gawk
+gzip
+tar
+util-linux
+kmod
+eudev
+e2fsprogs
+dosfstools
+shadow
+opendoas
+xbps
+ncurses-base
+tzdata
+
+# Networking (Wi-Fi + USB networking for development)
+iproute2
+wpa_supplicant
+dhcpcd
+ca-certificates
+curl
+
+# Store / app installer
+unzip
+
+# Web runtime for KaiOS apps (built from packaging/void/srcpkgs)
+wpewebkit
+cog
+mesa-dri
+libinput
+gst-plugins-good1
+
+# Qualcomm MSM8909 modem/Wi-Fi userspace
+qrtr-ns
+rmtfs
+pd-mapper
+tqftpserv
+
+# Telephony (experimental)
+dbus
+ofono
+
+# Audio
+alsa-utils

@@ -1,0 +1,36 @@
+# Template file for 'vortex'
+#
+# The Vortex shell, KaiOS runtime helpers and system configuration.
+# For local development rootfs/build.sh installs straight from the source
+# tree instead; this template is for publishing binary packages.
+pkgname=vortex
+version=0.1.0
+revision=1
+build_wrksrc=shell
+build_style=gnu-makefile
+make_build_args="VERSION=${version}"
+depends="curl unzip cog wpa_supplicant dhcpcd opendoas"
+short_desc="Feature-phone shell and KaiOS app runtime for the Vortex distribution"
+maintainer="Vortex <vortex@localhost>"
+license="MIT"
+homepage="https://github.com/grinkodbogdan/Vortex-"
+distfiles="https://github.com/grinkodbogdan/Vortex-/archive/refs/tags/v${version}.tar.gz"
+checksum=@CHECKSUM@  # fill in when the release is tagged
+
+do_install() {
+	vbin vortex-shell
+	cd ..
+	for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call; do
+		vinstall runtime/$f 755 usr/libexec/vortex
+	done
+	vbin runtime/vortex-wifi
+	vbin runtime/vortex-power
+	vinstall runtime/kaios-shim.js 644 usr/share/vortex
+	vinstall assets/fonts/Roboto-Regular.ttf 644 usr/share/vortex/fonts
+	vlicense assets/fonts/LICENSE-Apache-2.0.txt Roboto-LICENSE
+	vlicense shell/third_party/nuklear/LICENSE nuklear-LICENSE
+	vmkdir etc
+	vcopy rootfs/overlay/etc/vortex etc
+	vmkdir etc/sv
+	vcopy rootfs/overlay/etc/sv/vortex-shell etc/sv
+}

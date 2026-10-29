@@ -1,0 +1,9 @@
+#!/bin/sh
+# The shell runs unprivileged; privileged actions go through doas.
+exec 2>&1
+[ -d /var/lib/vortex/apps ] || install -d -o vortex -g vortex /var/lib/vortex/apps /var/lib/vortex/data
+[ -d /var/cache/vortex ] || install -d -o vortex -g vortex /var/cache/vortex
+# The shell is the last thing that should be OOM-killed.
+echo -900 > /proc/self/oom_score_adj
+export HOME=/var/lib/vortex PATH=/usr/bin:/usr/sbin:/usr/libexec/vortex
+exec chpst -u vortex:vortex:video:input:audio vortex-shell

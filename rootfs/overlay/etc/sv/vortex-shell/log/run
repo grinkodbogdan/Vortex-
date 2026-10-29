@@ -1,0 +1,5 @@
+#!/bin/sh
+[ -d /var/log/vortex-shell ] || mkdir -p /var/log/vortex-shell
+# small rotation: 2 x 64 KiB
+printf 's65536\nn2\n' > /var/log/vortex-shell/config
+exec svlogd -tt /var/log/vortex-shell

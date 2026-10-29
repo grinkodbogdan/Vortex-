@@ -1,0 +1,116 @@
+#!/bin/sh
+# Install a KaiOS app.
+#
+#   vortex-kai-install --id ID [--name NAME] [--type TYPE] --url URL
+#   vortex-kai-install --id ID --file PACKAGE.zip
+#
+# Accepts both package layouts found in the wild:
+#   - OmniSD / BananaHackers: outer zip with application.zip + metadata.json
+#   - a plain application zip with manifest.webapp at its root (or in one
+#     top-level folder)
+# The app ends up in $apps_dir/ID with the Vortex KaiOS shim injected into
+# its HTML pages.  Replacing an installed app is atomic.
+set -eu
+
+die() { echo "vortex-kai-install: $*" >&2; exit 1; }
+
+CONF=${VORTEX_CONF:-/etc/vortex/vortex.conf}
+conf() { [ -r "$CONF" ] && sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CONF" | tail -n 1; }
+
+APPS_DIR=${VORTEX_APPS_DIR:-$(conf apps_dir)}
+APPS_DIR=${APPS_DIR:-/var/lib/vortex/apps}
+SHIM=${VORTEX_SHIM:-/usr/share/vortex/kaios-shim.js}
+MAX_SIZE=${VORTEX_MAX_PACKAGE:-67108864}   # 64 MiB
+
+ID= NAME= TYPE=packaged URL= FILE=
+while [ $# -gt 0 ]; do
+	case $1 in
+	--id) ID=$2; shift 2 ;;
+	--name) NAME=$2; shift 2 ;;
+	--type) TYPE=$2; shift 2 ;;
+	--url) URL=$2; shift 2 ;;
+	--file) FILE=$2; shift 2 ;;
+	*) die "unknown argument: $1" ;;
+	esac
+done
+
+# The id becomes a directory name: keep it boring.
+case $ID in
+''|.*|*[!A-Za-z0-9._-]*) die "invalid app id '$ID'" ;;
+esac
+[ -n "$URL$FILE" ] || die "need --url or --file"
+[ -r "$SHIM" ] || die "missing $SHIM"
+
+mkdir -p "$APPS_DIR"
+# Work inside apps_dir so the final rename stays on one filesystem.
+WORK=$(mktemp -d "$APPS_DIR/.install-$ID.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT INT TERM
+
+if [ -n "$FILE" ]; then
+	cp "$FILE" "$WORK/pkg.zip"
+else
+	curl -fsSL --retry 2 --max-time 600 --max-filesize "$MAX_SIZE" \
+		-o "$WORK/pkg.zip" "$URL" || die "download failed: $URL"
+fi
+
+# Info-ZIP unzip refuses absolute paths and strips "../" components.
+unzip -qq -o "$WORK/pkg.zip" -d "$WORK/outer" || die "not a zip archive"
+
+if [ -f "$WORK/outer/application.zip" ]; then
+	unzip -qq -o "$WORK/outer/application.zip" -d "$WORK/app" || die "bad application.zip"
+	[ -f "$WORK/outer/metadata.json" ] && cp "$WORK/outer/metadata.json" "$WORK/app/.vortex-metadata.json"
+elif [ -f "$WORK/outer/manifest.webapp" ]; then
+	mv "$WORK/outer" "$WORK/app"
+else
+	m=$(find "$WORK/outer" -mindepth 2 -maxdepth 2 -name manifest.webapp | head -n 1)
+	[ -n "$m" ] || die "package has no manifest.webapp"
+	mv "$(dirname "$m")" "$WORK/app"
+fi
+[ -f "$WORK/app/manifest.webapp" ] || die "package has no manifest.webapp"
+
+# Load the shim before any app script.  Pages are served from app://ID/,
+# so an absolute path works from every directory.
+cp "$SHIM" "$WORK/app/vortex-kaios-shim.js"
+TAG='<script src="/vortex-kaios-shim.js"></script>'
+find "$WORK/app" -type f \( -name '*.html' -o -name '*.htm' \) | while IFS= read -r f; do
+	grep -q 'vortex-kaios-shim.js' "$f" && continue
+	if grep -qi '<head' "$f"; then
+		awk -v tag="$TAG" '
+			!done {
+				i = index(tolower($0), "<head")
+				if (i) {
+					rest = substr($0, i); j = index(rest, ">")
+					if (j) { print substr($0, 1, i + j - 1) tag substr($0, i + j); done = 1; next }
+				}
+			}
+			{ print }' "$f" > "$f.vortex" && mv "$f.vortex" "$f"
+	elif grep -qi '<!doctype' "$f"; then
+		# no <head>: go right after the doctype to stay in standards mode
+		awk -v tag="$TAG" '
+			!done {
+				i = index(tolower($0), "<!doctype")
+				if (i) {
+					rest = substr($0, i); j = index(rest, ">")
+					if (j) { print substr($0, 1, i + j - 1) tag substr($0, i + j); done = 1; next }
+				}
+			}
+			{ print }' "$f" > "$f.vortex" && mv "$f.vortex" "$f"
+	else
+		{ printf '%s\n' "$TAG"; cat "$f"; } > "$f.vortex" && mv "$f.vortex" "$f"
+	fi
+done
+
+{
+	echo "id=$ID"
+	echo "name=$NAME"
+	echo "type=$TYPE"
+	echo "source=${URL:-$FILE}"
+	echo "installed=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "$WORK/app/.vortex-info"
+
+DEST="$APPS_DIR/$ID"
+if [ -e "$DEST" ]; then
+	mv "$DEST" "$WORK/old"
+fi
+mv "$WORK/app" "$DEST"
+echo "installed $ID into $DEST"

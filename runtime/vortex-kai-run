@@ -1,0 +1,67 @@
+#!/bin/sh
+# Launch an installed KaiOS app in the web runtime (WPE WebKit via Cog).
+#   vortex-kai-run /var/lib/vortex/apps/ID
+#
+# The app is served from app://ID/ by Cog's directory handler, so the
+# absolute paths KaiOS apps use ("/js/app.js") resolve inside the app.
+# Each app gets its own XDG data/cache dirs, i.e. its own localStorage and
+# IndexedDB, like separate origins on KaiOS.
+set -eu
+
+die() { echo "vortex-kai-run: $*" >&2; exit 1; }
+
+APPDIR=${1:?usage: vortex-kai-run APPDIR}
+APPDIR=${APPDIR%/}
+ID=$(basename "$APPDIR")
+[ -f "$APPDIR/manifest.webapp" ] || die "$APPDIR has no manifest.webapp"
+
+# Defaults; /etc/vortex/runtime.conf may override any of them.
+VORTEX_WEB_ENGINE=cog
+VORTEX_COG_PLATFORM=drm
+VORTEX_WEB_MEM_LIMIT=180          # MiB before WebKit starts shedding caches
+VORTEX_DATA_DIR=/var/lib/vortex/data
+VORTEX_WEB_CACHE=/var/cache/vortex/web
+VORTEX_SHIM=/usr/share/vortex/kaios-shim.js
+VORTEX_USER_AGENT="Mozilla/5.0 (Mobile; Nokia 6300 4G; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5.4 Vortex/0.1"
+VORTEX_EXTRA_ARGS=
+[ -r /etc/vortex/runtime.conf ] && . /etc/vortex/runtime.conf
+
+# manifest.webapp is small; flatten it and pull out launch_path.
+LAUNCH=$(tr -d '\r\n' < "$APPDIR/manifest.webapp" |
+	sed -n 's/.*"launch_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+[ -n "$LAUNCH" ] || LAUNCH=/index.html
+case $LAUNCH in /*) ;; *) LAUNCH=/$LAUNCH ;; esac
+
+# Keep the shim current across Vortex updates.
+if [ -r "$VORTEX_SHIM" ] && ! cmp -s "$VORTEX_SHIM" "$APPDIR/vortex-kaios-shim.js"; then
+	cp "$VORTEX_SHIM" "$APPDIR/vortex-kaios-shim.js" 2>/dev/null || true
+fi
+
+export XDG_DATA_HOME="$VORTEX_DATA_DIR/$ID"
+export XDG_CACHE_HOME="$VORTEX_WEB_CACHE/$ID"
+mkdir -p "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
+
+# Use the system allocator instead of bmalloc: noticeably smaller footprint
+# on a 512 MB phone, at a small speed cost.
+export Malloc=1
+# 240x320 panel, portrait.
+export COG_PLATFORM_DRM_VIDEO_MODE=${COG_PLATFORM_DRM_VIDEO_MODE:-240x320}
+
+# Let the kernel reclaim the web app before the shell or system services.
+echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
+
+# shellcheck disable=SC2086 # VORTEX_EXTRA_ARGS is a word list on purpose
+exec "$VORTEX_WEB_ENGINE" \
+	--platform="$VORTEX_COG_PLATFORM" \
+	--doc-viewer \
+	--webprocess-failure=exit \
+	--bg-color=black \
+	--web-mem-limit="$VORTEX_WEB_MEM_LIMIT" \
+	--dir-handler="app:$APPDIR" \
+	--disable-web-security=true \
+	--allow-modal-dialogs=true \
+	--enable-developer-extras=false \
+	--enable-page-cache=false \
+	--user-agent="$VORTEX_USER_AGENT" \
+	$VORTEX_EXTRA_ARGS \
+	"app://$ID$LAUNCH"
