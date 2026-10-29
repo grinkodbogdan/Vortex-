@@ -2,12 +2,53 @@
 # Vortex initramfs: find the root filesystem by its label and switch to it.
 # The same boot image works with the rootfs on a microSD card or flashed to
 # the internal "userdata" partition.
+#
+# Debugging: a USB serial console comes up first.  On the PC run
+#   screen /dev/ttyACM0 115200      (or: picocom /dev/ttyACM0)
+# to watch the boot; if no root filesystem is found you get a shell there.
 /bin/busybox --install -s /bin
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
-say() { echo "vortex-init: $*" > /dev/kmsg; }
+log() {
+	echo "vortex-init: $*" > /dev/kmsg
+	[ -c /dev/ttyGS0 ] && echo "vortex-init: $*" > /dev/ttyGS0 2>/dev/null
+}
+
+# USB serial gadget (ACM): appears on the PC as /dev/ttyACM0.
+usb_serial() {
+	for m in libcomposite u_serial usb_f_acm; do
+		insmod "/lib/modules/$m.ko" 2>/dev/null
+	done
+	mount -t configfs configfs /sys/kernel/config 2>/dev/null || return 1
+	g=/sys/kernel/config/usb_gadget/vortex
+	mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.usb0" || return 1
+	echo 0x1d6b > "$g/idVendor"   # Linux Foundation
+	echo 0x0104 > "$g/idProduct"  # multifunction composite gadget
+	echo Vortex > "$g/strings/0x409/manufacturer"
+	echo "Nokia 6300 4G (Vortex debug)" > "$g/strings/0x409/product"
+	echo vortex > "$g/strings/0x409/serialnumber"
+	echo "serial console" > "$g/configs/c.1/strings/0x409/configuration"
+	ln -s "$g/functions/acm.usb0" "$g/configs/c.1/" 2>/dev/null
+	i=0
+	while [ $i -lt 30 ] && [ -z "$(ls /sys/class/udc 2>/dev/null)" ]; do sleep 0.1; i=$((i + 1)); done
+	ls /sys/class/udc > "$g/UDC" 2>/dev/null || return 1
+	sleep 1
+}
+
+rescue() {
+	log "$*"
+	log "dropping to a shell on the USB serial console"
+	umount /sys/kernel/config 2>/dev/null
+	if [ -c /dev/ttyGS0 ]; then
+		exec sh < /dev/ttyGS0 > /dev/ttyGS0 2>&1
+	fi
+	exec sh
+}
+
+usb_serial && log "USB serial console up" || echo "vortex-init: no USB serial console" > /dev/kmsg
+log "kernel $(uname -r), waiting for the 'vortex' partition"
 
 root=
 i=0
@@ -16,16 +57,14 @@ while [ $i -lt 100 ]; do            # up to 10 s for the SD card to show up
 	sleep 0.1
 	i=$((i + 1))
 done
-if [ -z "$root" ]; then
-	say "no partition labelled 'vortex' found; dropping to a shell on the serial console"
-	exec sh
-fi
-say "root is $root"
+[ -n "$root" ] || rescue "no partition labelled 'vortex' found ($(ls /dev/mmcblk* 2>/dev/null | tr '\n' ' '))"
+log "root is $root"
 mkdir -p /newroot
-if ! mount -t ext4 -o rw,noatime "$root" /newroot; then
-	say "cannot mount $root"
-	exec sh
-fi
+mount -t ext4 -o rw,noatime "$root" /newroot || rescue "cannot mount $root"
+[ -x /newroot/sbin/init ] || [ -L /newroot/sbin/init ] || rescue "$root has no /sbin/init"
+log "switching to the root filesystem"
+# The gadget stays configured; the system's usb-shell service reuses it.
+umount /sys/kernel/config 2>/dev/null
 umount /proc /sys
 mount --move /dev /newroot/dev
 exec switch_root /newroot /sbin/init

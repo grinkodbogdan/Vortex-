@@ -14,7 +14,7 @@
 #
 # The initramfs mounts whichever partition is labelled "vortex", so the
 # same boot image works with either root filesystem.
-# Needs: python3, mke2fs (e2fsprogs >= 1.43), sfdisk, img2simg, gzip.
+# Needs: python3, mke2fs (e2fsprogs >= 1.43), sfdisk, img2simg, gzip, zstd.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -33,7 +33,8 @@ SYS=$OUT/sysroot
 K=$OUT/kernel
 DTB=qcom-msm8909-nokia-leo.dtb
 DIST=$OUT/vortex-nokia-6300-4g
-CMDLINE="console=ttyMSM0,115200 quiet loglevel=3 vt.global_cursor_default=0 firmware_class.path=/run/vortex/firmware"
+# console=tty0 last: boot messages show on the panel once its driver loads
+CMDLINE="console=ttyMSM0,115200 console=tty0 loglevel=4 vt.global_cursor_default=0 firmware_class.path=/run/vortex/firmware"
 
 msg() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -51,6 +52,12 @@ cp "$ROOT/usr/bin/busybox.static" "$I/bin/busybox" 2>/dev/null ||
 	cp "$SYS/usr/bin/busybox.static" "$I/bin/busybox" 2>/dev/null ||
 	die "busybox.static missing (add busybox-static to the sysroot)"
 install -m755 "$TOP/tools/phone/initramfs-init" "$I/init"
+# USB serial console modules (busybox insmod wants them uncompressed)
+mkdir -p "$I/lib/modules"
+for m in gadget/libcomposite gadget/function/u_serial gadget/function/usb_f_acm; do
+	zstd -qdc "$ROOT/usr/lib/modules/$(cat "$K/kernel.release")/kernel/drivers/usb/$m.ko.zst" \
+		> "$I/lib/modules/${m##*/}.ko"
+done
 python3 "$TOP/tools/phone/mkcpio.py" "$I" "$T/initramfs.gz"
 
 msg "boot image"

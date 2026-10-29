@@ -153,7 +153,7 @@ EOF
 SV=$ROOT/etc/runit/runsvdir/default
 mkdir -p "$SV"
 rm -f "$SV"/agetty-*
-for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv; do
+for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell; do
 	[ -d "$ROOT/etc/sv/$s" ] && ln -sf "/etc/sv/$s" "$SV/$s"
 done
 # Wi-Fi starts off (vortex-wifi on brings it up): saves ~4 MB and battery.
