@@ -13,14 +13,21 @@ mount -t devtmpfs devtmpfs /dev
 
 log() {
 	echo "vortex-init: $*" > /dev/kmsg
+	echo "vortex: $*" > /dev/tty0 2>/dev/null
 	[ -c /dev/ttyGS0 ] && echo "vortex-init: $*" > /dev/ttyGS0 2>/dev/null
+}
+
+# Panel, charger (reports USB VBUS to the USB controller), fuel gauge and
+# the USB gadget modules, dependencies first.
+load_modules() {
+	while read -r m; do
+		insmod "/lib/modules/$m.ko" 2>/dev/null ||
+			echo "vortex-init: insmod $m failed" > /dev/kmsg
+	done < /lib/modules/load-order
 }
 
 # USB serial gadget (ACM): appears on the PC as /dev/ttyACM0.
 usb_serial() {
-	for m in libcomposite u_serial usb_f_acm; do
-		insmod "/lib/modules/$m.ko" 2>/dev/null
-	done
 	mount -t configfs configfs /sys/kernel/config 2>/dev/null || return 1
 	g=/sys/kernel/config/usb_gadget/vortex
 	mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.usb0" || return 1
@@ -32,7 +39,7 @@ usb_serial() {
 	echo "serial console" > "$g/configs/c.1/strings/0x409/configuration"
 	ln -s "$g/functions/acm.usb0" "$g/configs/c.1/" 2>/dev/null
 	i=0
-	while [ $i -lt 30 ] && [ -z "$(ls /sys/class/udc 2>/dev/null)" ]; do sleep 0.1; i=$((i + 1)); done
+	while [ $i -lt 50 ] && [ -z "$(ls /sys/class/udc 2>/dev/null)" ]; do sleep 0.1; i=$((i + 1)); done
 	ls /sys/class/udc > "$g/UDC" 2>/dev/null || return 1
 	sleep 1
 }
@@ -44,9 +51,13 @@ rescue() {
 	if [ -c /dev/ttyGS0 ]; then
 		exec sh < /dev/ttyGS0 > /dev/ttyGS0 2>&1
 	fi
-	exec sh
+	# no keyboard on the console: keep the message on screen (init must not exit)
+	while :; do sleep 3600; done
 }
 
+load_modules
+sleep 1                             # let the panel driver bind and fbcon take over
+log "starting (initramfs)"
 usb_serial && log "USB serial console up" || echo "vortex-init: no USB serial console" > /dev/kmsg
 log "kernel $(uname -r), waiting for the 'vortex' partition"
 

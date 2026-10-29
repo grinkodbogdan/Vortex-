@@ -69,8 +69,10 @@ to KaiOS, restore your `boot` backup.
 
 ## 3. First boot
 
-* lk2nd starts the Vortex kernel. The screen stays dark until the panel
-  driver loads.
+* lk2nd draws "lk2nd-msm8909 23.1" over the KaiOS logo and starts the
+  Vortex kernel. A few seconds later the screen switches to scrolling boot
+  messages (the initramfs loads the panel driver first), and the USB debug
+  console appears on the PC.
 * **The first boot takes several minutes.** The image was put together on a
   PC, so the phone now runs every package's setup step once
   (`/var/log/vortex-firstboot.log`). The screen shows *"Vortex: first-boot
@@ -82,6 +84,11 @@ red End goes home (hold it for the power menu), and green Call opens the
 dialer.
 
 ## Debugging
+
+> alpha2 did not load the charger driver (`pm8916-lbc`) in its initramfs.
+> That driver tells the USB controller that a cable is plugged in, so the
+> debug console never appeared, and the screen kept the lk2nd/KaiOS image.
+> alpha3 loads it, along with the panel driver.
 
 * **Serial console:** `ttyMSM0` at 115200 baud. The test points are in the
   board schematics linked from the postmarketOS wiki. Build with

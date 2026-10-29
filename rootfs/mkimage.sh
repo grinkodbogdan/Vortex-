@@ -34,7 +34,8 @@ K=$OUT/kernel
 DTB=qcom-msm8909-nokia-leo.dtb
 DIST=$OUT/vortex-nokia-6300-4g
 # console=tty0 last: boot messages show on the panel once its driver loads
-CMDLINE="console=ttyMSM0,115200 console=tty0 loglevel=4 vt.global_cursor_default=0 firmware_class.path=/run/vortex/firmware"
+# (from the initramfs).  loglevel=7 while the port is being brought up.
+CMDLINE="earlycon console=ttyMSM0,115200 console=tty0 loglevel=7 vt.global_cursor_default=0 firmware_class.path=/run/vortex/firmware"
 
 msg() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -52,12 +53,14 @@ cp "$ROOT/usr/bin/busybox.static" "$I/bin/busybox" 2>/dev/null ||
 	cp "$SYS/usr/bin/busybox.static" "$I/bin/busybox" 2>/dev/null ||
 	die "busybox.static missing (add busybox-static to the sysroot)"
 install -m755 "$TOP/tools/phone/initramfs-init" "$I/init"
-# USB serial console modules (busybox insmod wants them uncompressed)
-mkdir -p "$I/lib/modules"
-for m in gadget/libcomposite gadget/function/u_serial gadget/function/usb_f_acm; do
-	f=$ROOT/usr/lib/modules/$(cat "$K/kernel.release")/kernel/drivers/usb/$m.ko
-	if [ -f "$f.zst" ]; then zstd -qdc "$f.zst" > "$I/lib/modules/${m##*/}.ko"; else cp "$f" "$I/lib/modules/"; fi
-done
+# Early modules, as postmarketOS' device-nokia-leo loads them: the panel (so
+# boot messages show on screen), the charger (it reports USB VBUS; without
+# it the USB controller never comes up), the fuel gauge, and the USB serial
+# gadget for the debug console.
+python3 "$TOP/tools/phone/initramfs-modules.py" "$ROOT/usr/lib/modules/$(cat "$K/kernel.release")" \
+	"$I/lib/modules" panel-mipi-dbi pm8916-lbc pm8916-bms-vm libcomposite u_serial usb_f_acm
+mkdir -p "$I/lib/firmware"
+cp "$ROOT"/usr/lib/firmware/nokia,leo-*.bin "$I/lib/firmware/"
 python3 "$TOP/tools/phone/mkcpio.py" "$I" "$T/initramfs.gz"
 
 msg "boot image"
