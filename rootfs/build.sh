@@ -43,7 +43,7 @@ GPUFW=master/firmware-qcom-adreno-a300-20260110-r1
 # https://github.com/msm8916-mainline/lk2nd/releases.  postmarketOS'
 # lk2nd-msm8916 package does NOT start on this phone.
 LK2ND_IMG=${LK2ND_IMG:-}
-PMAPORTS=690ccca91f4b5d60bd9e306f8449cd80e3daf682
+# panel sequence source: pmaports 690ccca91f4b5d60bd9e306f8449cd80e3daf682
 PANEL=nokia,leo-gc9305-hlt-24-panel
 DTB=qcom-msm8909-nokia-leo.dtb
 
@@ -105,10 +105,10 @@ cp -a "$T/$GPUFW/usr/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null ||
 	cp -a "$T/$GPUFW/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null || true
 
 msg "panel init sequence"
-curl -fsSL -o "$T/panel.txt" \
-	"https://gitlab.postmarketos.org/postmarketOS/pmaports/-/raw/$PMAPORTS/device/archived/device-nokia-leo/$PANEL.txt"
+# tools/phone/$PANEL.txt is pmaports' device-nokia-leo file (commit above)
+# (sha512 8583c7d5...), kept here so builds don't depend on GitLab.
 mkdir -p "$ROOT/usr/lib/firmware"
-python3 "$TOP/tools/phone/mipi-dbi-fw.py" "$ROOT/usr/lib/firmware/$PANEL.bin" "$T/panel.txt"
+python3 "$TOP/tools/phone/mipi-dbi-fw.py" "$ROOT/usr/lib/firmware/$PANEL.bin" "$TOP/tools/phone/$PANEL.txt"
 
 # ---------------------------------------------------------------- vortex
 msg "cross-compiling vortex-shell (armv7, static)"
