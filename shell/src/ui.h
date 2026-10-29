@@ -67,6 +67,8 @@ struct shell {
     char scan_path[280];
 
     pid_t app_pid;                 /* running web app, 0 = none */
+    long app_started;              /* when it was launched (ms) */
+    int app_closing;               /* we asked it to quit (End key) */
 
     char toast[96];
     long toast_until;

@@ -466,6 +466,8 @@ static void launch_app(int idx)
 
     snprintf(dir, sizeof(dir), "%s/%s", S->cfg.apps_dir, a->id);
     S->app_pid = proc_spawn(argv);
+    S->app_started = S->now;
+    S->app_closing = 0;
     if (S->app_pid < 0) {
         S->app_pid = 0;
         toast("Could not start the web runtime");
@@ -1719,6 +1721,7 @@ int shell_key(struct shell *sh, const struct vx_event *ev)
             if (sh->end_long_fired)
                 return 0;
             if (sh->app_pid) {
+                sh->app_closing = 1;
                 proc_kill_group(sh->app_pid, 1500);
                 /* shell_tick notices the exit */
                 return 0;
@@ -1805,7 +1808,7 @@ static void job_done(int code)
 int shell_tick(struct shell *sh)
 {
     static long last_sys, last_min = -1;
-    int dirty = 0, code;
+    int dirty = 0, code = 0;
     time_t t = time(NULL);
 
     S = sh;
@@ -1813,6 +1816,10 @@ int shell_tick(struct shell *sh)
         if (proc_poll(sh->app_pid, &code) != 0) {
             sh->app_pid = 0;
             plat_resume_display();
+            /* It ended by itself, with an error, soon after starting: it
+             * never really ran.  The runtime logs why. */
+            if (!sh->app_closing && code != 0 && sh->now - sh->app_started < 30000)
+                toast("App failed to start");
             sh->force_redraw = 1;
             sh->last_input = sh->now;
             apps_scan(&sh->apps, sh->cfg.apps_dir);

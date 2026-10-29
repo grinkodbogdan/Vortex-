@@ -12,7 +12,9 @@ export WLR_LIBINPUT_NO_DEVICES=1 GDK_BACKEND=wayland
 # WebKit draws on the CPU: no EGL/dmabuf on the phone's display-only panel
 # device, and less memory than llvmpipe.  No accessibility bus either.
 export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-	WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 NO_AT_BRIDGE=1
+	WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 NO_AT_BRIDGE=1 GDK_GL=disable
+# A crash in the Python/GTK process prints where it happened.
+export PYTHONFAULTHANDLER=1
 # Use the DRM device that drives a display.  On the Nokia 6300 4G the panel
 # (panel-mipi-dbi) and the Adreno GPU are separate devices.
 if [ -z "${WLR_DRM_DEVICES:-}" ]; then

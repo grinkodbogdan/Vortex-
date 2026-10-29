@@ -90,6 +90,8 @@ dialer.
   authorisation prompt. For adb over Wi-Fi, run `touch /etc/vortex/adb-tcp`
   and `sv restart adbd`, then `adb connect PHONE-IP:5555` (anyone on the
   network gets a root shell then). To turn adb off: `sv down adbd`.
+* **A KaiOS app does not open** ("App failed to start"): each launch logs to
+  `/var/cache/vortex/logs/APP_ID.log` (the previous run is kept as `.old`).
 * **Wi-Fi does not come on:** Settings shows "No Wi-Fi hardware found" when
   the Wi-Fi chip did not start. `dmesg | grep -i -e wcn -e pronto -e firmware`
   shows why (the firmware comes from the phone's `modem` partition).
