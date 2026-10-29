@@ -150,10 +150,13 @@ static void stroke_rect(float fx, float fy, float fw, float fh, float r, float t
             /* ring of thickness t just inside the edge */
             float ring = fabsf(sd + t * .5f) - t * .5f;
             plot(x, y, c, cov_from_sd(ring));
-            /* skip the hollow interior quickly */
-            if (sd < -t - 1 && x > x0 + (int)r + 1 && x < x1 - (int)r - 2 &&
-                y > y0 + (int)t + 1 && y < y1 - (int)t - 2)
-                x = x1 - (int)ceilf(r + t) - 2;
+            /* skip the hollow interior quickly (only ever forward) */
+            if (sd < -t - 1 && x > x0 + (int)r + 1 && y > y0 + (int)ceilf(r + t) + 1 &&
+                y < y1 - (int)ceilf(r + t) - 2) {
+                int nx = x1 - (int)ceilf(t) - 2;
+                if (nx > x)
+                    x = nx;
+            }
         }
     }
 }

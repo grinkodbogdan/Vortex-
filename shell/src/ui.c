@@ -24,12 +24,19 @@
 #define ROW_H 30
 #define ROW2_H 42
 
-/* KaiOS-like dark theme. */
+/* Nokia S40 / S30+ inspired theme: black screen, brushed-chrome title and
+ * soft-key bars, pale silver selection bars, pastel accents. */
 #define C(rgb) nk_rgb(((rgb) >> 16) & 0xff, ((rgb) >> 8) & 0xff, (rgb) & 0xff)
 static const struct {
-    uint32_t bg, panel, status, accent, accent_dim, text, dim, warn, ok, sep;
+    uint32_t bg, panel, status, accent, accent_dim, text, dim, warn, ok, sep, ink, ink_dim;
 } T = {
-    0x0f1216, 0x1a1f27, 0x000000, 0x2f7cf6, 0x1d4f9e, 0xf1f4f8, 0x8b94a3, 0xf2994a, 0x3ecf8e, 0x262c36,
+    .bg = 0x000000, .panel = 0x121416, .status = 0x000000,
+    .accent = 0xb4c4d4,     /* pale steel blue: focus rings, spinner */
+    .accent_dim = 0x2b3138,
+    .text = 0xe9ecef, .dim = 0x8c939a,
+    .warn = 0xf1cf8f, .ok = 0xa8dcb0, .sep = 0x1d2023,
+    .ink = 0x0d0f11,        /* text on chrome / selection */
+    .ink_dim = 0x46505a,
 };
 
 static struct nk_command_buffer *cv;
@@ -85,6 +92,33 @@ static void fill(struct nk_rect r, float round, uint32_t col)
     nk_fill_rect(cv, r, round, C(col));
 }
 
+/* Vertical gradient (Nuklear corner order: TL, TR, BR, BL). */
+static void vgrad(struct nk_rect r, uint32_t top, uint32_t bottom)
+{
+    nk_fill_rect_multi_color(cv, r, C(top), C(top), C(bottom), C(bottom));
+}
+
+/* Brushed chrome: bright upper half, darker lower half with a crisp
+ * reflection line in the middle, light rim on top, dark rim below. */
+static void chrome(struct nk_rect r)
+{
+    float half = (float)(int)(r.h / 2);
+    vgrad(nk_rect(r.x, r.y, r.w, half), 0xf6f8fa, 0xd5dade);
+    vgrad(nk_rect(r.x, r.y + half, r.w, r.h - half), 0xbcc2c8, 0x9aa2aa);
+    fill(nk_rect(r.x, r.y, r.w, 1), 0, 0xffffff);
+    fill(nk_rect(r.x, r.y + r.h - 1, r.w, 1), 0, 0x50575e);
+}
+
+/* Pale silver-blue selection bar, like the S40 list highlight. */
+static void highlight(struct nk_rect r)
+{
+    float half = (float)(int)(r.h / 2);
+    vgrad(nk_rect(r.x, r.y, r.w, half), 0xf3f6f9, 0xdde5ec);
+    vgrad(nk_rect(r.x, r.y + half, r.w, r.h - half), 0xcdd8e2, 0xb4c3d1);
+    fill(nk_rect(r.x, r.y, r.w, 1), 0, 0xffffff);
+    fill(nk_rect(r.x, r.y + r.h - 1, r.w, 1), 0, 0x7f8d9a);
+}
+
 static struct nk_rect content_rect(int with_header)
 {
     float top = SB_H + (with_header ? HDR_H : 0);
@@ -137,9 +171,9 @@ static void status_bar(void)
     strftime(clock, sizeof(clock), "%H:%M", &tm);
     fill(nk_rect(0, 0, w, SB_H), 0, T.status);
 
-    /* Wi-Fi: three arcs approximated by bars of rising height. */
+    /* Wi-Fi: S40-style bars of rising height. */
     for (int i = 0; i < 4; i++)
-        fill(nk_rect(6 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.wifi_up ? T.text : 0x3a404a);
+        fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.wifi_up ? T.text : 0x33383d);
     if (S->job != JOB_NONE || S->store.fetch_pid > 0)
         label(nk_rect(28, 0, 40, SB_H), "\xe2\x86\x93", f, T.accent, AL_LEFT); /* ↓ activity */
 
@@ -150,35 +184,38 @@ static void status_bar(void)
         float bx = w - 30, fillw = 18.f * S->sys.battery / 100.f;
         snprintf(pct, sizeof(pct), "%d%%", S->sys.battery);
         label(nk_rect(bx - 40, 0, 36, SB_H), pct, f, T.text, AL_RIGHT);
-        nk_stroke_rect(cv, nk_rect(bx, 5, 22, 11), 2, 1, C(T.text));
-        fill(nk_rect(bx + 22, 8, 2, 5), 0, T.text);
-        fill(nk_rect(bx + 2, 7, fillw, 7), 0,
-             S->sys.charging ? T.ok : S->sys.battery <= 15 ? T.warn : T.text);
+        nk_stroke_rect(cv, nk_rect(bx, 5, 22, 11), 1, 1, C(T.dim));
+        fill(nk_rect(bx + 22, 8, 2, 5), 0, T.dim);
+        /* four segments, like the classic battery indicator */
+        for (int i = 0; i < 4 && i * 25 < S->sys.battery; i++)
+            fill(nk_rect(bx + 2 + i * 4.5f, 7, 3.5f, 7), 0,
+                 S->sys.charging ? T.ok : S->sys.battery <= 15 ? T.warn : T.text);
+        (void)fillw;
     }
 }
 
 static void header(const char *title, const char *sub)
 {
     float w = (float)S->surf->w;
-    fill(nk_rect(0, SB_H, w, HDR_H), 0, T.accent);
+    chrome(nk_rect(0, SB_H, w, HDR_H));
     if (sub && *sub) {
-        label(nk_rect(10, SB_H, w * 0.6f - 10, HDR_H), title, S->fonts.normal, 0xffffff, AL_LEFT);
-        label(nk_rect(w * 0.6f, SB_H, w * 0.4f - 8, HDR_H), sub, S->fonts.small, 0xdde7ff, AL_RIGHT);
+        label(nk_rect(10, SB_H, w * 0.68f - 10, HDR_H), title, S->fonts.normal, T.ink, AL_LEFT);
+        label(nk_rect(w * 0.68f, SB_H, w * 0.32f - 8, HDR_H), sub, S->fonts.small, T.ink_dim, AL_RIGHT);
     } else {
-        label(nk_rect(10, SB_H, w - 20, HDR_H), title, S->fonts.normal, 0xffffff, AL_LEFT);
+        label(nk_rect(10, SB_H, w - 20, HDR_H), title, S->fonts.normal, T.ink, AL_LEFT);
     }
 }
 
 static void softkeys(const char *l, const char *c, const char *r)
 {
     float w = (float)S->surf->w, y = S->surf->h - SK_H;
-    fill(nk_rect(0, y, w, SK_H), 0, T.panel);
+    chrome(nk_rect(0, y, w, SK_H));
     if (l)
-        label(nk_rect(6, y, w / 3 - 6, SK_H), l, S->fonts.small, T.text, AL_LEFT);
+        label(nk_rect(8, y, w / 3 - 8, SK_H), l, S->fonts.normal, T.ink, AL_LEFT);
     if (c)
-        label(nk_rect(w / 3, y, w / 3, SK_H), c, S->fonts.normal, T.text, AL_CENTER);
+        label(nk_rect(w / 3, y, w / 3, SK_H), c, S->fonts.normal, T.ink, AL_CENTER);
     if (r)
-        label(nk_rect(w * 2 / 3, y, w / 3 - 6, SK_H), r, S->fonts.small, T.text, AL_RIGHT);
+        label(nk_rect(w * 2 / 3, y, w / 3 - 8, SK_H), r, S->fonts.normal, T.ink, AL_RIGHT);
 }
 
 static void spinner(float cx, float cy, float rad)
@@ -187,7 +224,7 @@ static void spinner(float cx, float cy, float rad)
     for (int i = 0; i < 8; i++) {
         float a = i * 3.14159265f / 4;
         int age = (phase - i + 8) % 8;
-        uint32_t col = age == 0 ? T.text : age < 3 ? T.dim : 0x3a404a;
+        uint32_t col = age == 0 ? T.text : age < 3 ? T.accent : 0x3a4148;
         nk_fill_circle(cv, nk_rect(cx + rad * cosf(a) - 2.5f, cy + rad * sinf(a) - 2.5f, 5, 5), C(col));
     }
 }
@@ -213,7 +250,8 @@ static void scrollbar(struct nk_rect area, int top, int rows, int count)
     h = area.h * rows / count;
     if (h < 12) h = 12;
     y = area.y + (area.h - h) * top / (count - rows);
-    fill(nk_rect(area.x + area.w - 3, y, 2, h), 1, T.dim);
+    fill(nk_rect(area.x + area.w - 4, area.y, 3, area.h), 1, 0x15181b);
+    vgrad(nk_rect(area.x + area.w - 4, y, 3, h), 0xe6eaee, 0x9aa2aa);
 }
 
 static void list_row(struct nk_rect r, int selected, const char *title, const char *sub,
@@ -222,19 +260,19 @@ static void list_row(struct nk_rect r, int selected, const char *title, const ch
     const struct nk_font *f = S->fonts.normal;
     float rw = right ? text_w(S->fonts.small, right, (int)strlen(right)) + 10 : 0;
     if (selected)
-        fill(r, 0, T.accent);
+        highlight(nk_rect(r.x + 2, r.y + 1, r.w - 8, r.h - 2));
     else
         fill(nk_rect(r.x + 8, r.y + r.h - 1, r.w - 16, 1), 0, T.sep);
     if (sub) {
-        label(nk_rect(r.x + 10, r.y + 3, r.w - 20 - rw, r.h / 2), title, f, selected ? 0xffffff : T.text, AL_LEFT);
+        label(nk_rect(r.x + 10, r.y + 3, r.w - 20 - rw, r.h / 2), title, f, selected ? T.ink : T.text, AL_LEFT);
         label(nk_rect(r.x + 10, r.y + r.h / 2 - 1, r.w - 20 - rw, r.h / 2), sub, S->fonts.small,
-              selected ? 0xdde7ff : T.dim, AL_LEFT);
+              selected ? T.ink_dim : T.dim, AL_LEFT);
     } else {
-        label(nk_rect(r.x + 10, r.y, r.w - 20 - rw, r.h), title, f, selected ? 0xffffff : T.text, AL_LEFT);
+        label(nk_rect(r.x + 10, r.y, r.w - 20 - rw, r.h), title, f, selected ? T.ink : T.text, AL_LEFT);
     }
     if (right)
-        label(nk_rect(r.x + r.w - rw - 6, r.y, rw, r.h), right, S->fonts.small,
-              selected ? 0xffffff : right_col, AL_RIGHT);
+        label(nk_rect(r.x + r.w - rw - 10, r.y, rw, r.h), right, S->fonts.small,
+              selected ? T.ink_dim : right_col, AL_RIGHT);
 }
 
 static void toast_overlay(void)
@@ -247,7 +285,8 @@ static void toast_overlay(void)
         msg = S->toast;
     if (!msg)
         return;
-    fill(nk_rect(8, y, w - 16, 28), 6, 0x2a313c);
+    fill(nk_rect(8, y, w - 16, 28), 4, T.panel);
+    nk_stroke_rect(cv, nk_rect(8, y, w - 16, 28), 4, 1, C(0x9aa2aa));
     if (S->job != JOB_NONE) {
         spinner(24, y + 14, 6);
         label(nk_rect(38, y, w - 54, 28), msg, S->fonts.small, T.text, AL_LEFT);
@@ -615,12 +654,13 @@ static void draw_home(void)
     localtime_r(&t, &tm);
     strftime(hm, sizeof(hm), "%H:%M", &tm);
     strftime(date, sizeof(date), "%A, %e %B", &tm);
-    nk_fill_rect_multi_color(cv, nk_rect(0, SB_H, w, h - SB_H - SK_H), C(0x14233f), C(0x14233f),
-                             C(0x07090d), C(0x07090d));
-    label(nk_rect(0, SB_H + 34, w, S->fonts.clock->handle.height), hm, S->fonts.clock, 0xffffff, AL_CENTER);
-    label(nk_rect(0, SB_H + 40 + S->fonts.clock->handle.height, w, 22), date, S->fonts.normal, 0xc9d3e3, AL_CENTER);
-    label(nk_rect(0, h - SK_H - 30, w, 20), "VORTEX", S->fonts.small, 0x56627a, AL_CENTER);
-    softkeys("Store", "APPS", "Settings");
+    fill(nk_rect(0, SB_H, w, h - SB_H - SK_H), 0, T.bg);
+    /* soft silver glow at the bottom of the standby screen */
+    vgrad(nk_rect(0, h - SK_H - 90, w, 90), 0x000000, 0x1c2229);
+    label(nk_rect(10, SB_H + 4, w - 20, 20), "Vortex", S->fonts.normal, T.accent, AL_LEFT);
+    label(nk_rect(0, SB_H + 44, w, S->fonts.clock->handle.height), hm, S->fonts.clock, T.text, AL_CENTER);
+    label(nk_rect(0, SB_H + 50 + S->fonts.clock->handle.height, w, 22), date, S->fonts.normal, T.dim, AL_CENTER);
+    softkeys("Store", "Menu", "Settings");
 }
 
 #define GRID_COLS 3
@@ -636,7 +676,7 @@ static void draw_launcher(void)
     const struct vx_app *sel = &S->apps.list[S->launcher_sel];
 
     snprintf(sub, sizeof(sub), "%d/%d", S->launcher_sel + 1, count);
-    header("Apps", sub);
+    header(sel->name, sub);
     keep_visible(sel_row, &S->launcher_top, rows, total_rows);
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < GRID_COLS; c++) {
@@ -644,12 +684,16 @@ static void draw_launcher(void)
             struct nk_rect cell = nk_rect(area.x + c * cw, area.y + r * ch, cw, ch);
             struct vx_app *a;
             struct vx_image *icon;
-            float isz = 44, ix = cell.x + (cw - isz) / 2, iy = cell.y + 8;
+            float isz = 48, ix = cell.x + (cw - isz) / 2, iy = cell.y + (ch - isz) / 2;
             if (i >= count)
                 continue;
             a = &S->apps.list[i];
-            if (i == S->launcher_sel)
-                fill(nk_rect(cell.x + 3, cell.y + 3, cw - 6, ch - 6), 8, T.accent_dim);
+            if (i == S->launcher_sel) {
+                /* chrome frame around the focused icon */
+                struct nk_rect fr = nk_rect(ix - 9, iy - 9, isz + 18, isz + 18);
+                vgrad(fr, 0x39414a, 0x14181c);
+                nk_stroke_rect(cv, fr, 6, 2, C(0xdfe5ea));
+            }
             icon = apps_icon(&S->apps, i, (int)isz);
             if (icon) {
                 struct nk_image img = nk_image_ptr(icon);
@@ -662,15 +706,15 @@ static void draw_launcher(void)
                 memcpy(letter, a->name, (size_t)(bl > 0 && bl < 5 ? bl : 0));
                 nk_fill_rect(cv, nk_rect(ix, iy, isz, isz), 10,
                              nk_rgb((a->color >> 16) & 0xff, (a->color >> 8) & 0xff, a->color & 0xff));
+                /* glossy top half */
+                nk_fill_rect(cv, nk_rect(ix + 2, iy + 2, isz - 4, isz / 2 - 2), 8, nk_rgba(255, 255, 255, 60));
                 label(nk_rect(ix, iy, isz, isz), letter, cp <= 0xff ? S->fonts.large : S->fonts.normal,
-                      0xffffff, AL_CENTER);
+                      T.ink, AL_CENTER);
             }
-            label(nk_rect(cell.x + 2, iy + isz + 4, cw - 4, 18), a->name, S->fonts.small,
-                  i == S->launcher_sel ? 0xffffff : T.text, AL_CENTER);
         }
     }
     scrollbar(area, S->launcher_top, rows, total_rows);
-    softkeys(sel->kind == APP_KAIOS ? "Options" : NULL, "OPEN", "Back");
+    softkeys(sel->kind == APP_KAIOS ? "Options" : NULL, "Open", "Back");
 }
 
 static void draw_store(void)
@@ -727,7 +771,7 @@ static void draw_store(void)
                  right[0] ? right : NULL, T.dim);
     }
     scrollbar(area, S->store_cat_top, rows, n);
-    softkeys("Refresh", "SELECT", "Back");
+    softkeys("Refresh", "Select", "Back");
 }
 
 static void draw_store_list(void)
@@ -759,7 +803,7 @@ static void draw_store_list(void)
                  inst ? "Installed" : NULL, T.ok);
     }
     scrollbar(area, S->list_top, rows, S->list_n);
-    softkeys("Search", "VIEW", "Back");
+    softkeys("Search", "View", "Back");
 }
 
 struct wrapdraw { float x, y, lh; int first, last; uint32_t col; };
@@ -815,7 +859,7 @@ static void draw_store_detail(void)
     nk_push_scissor(cv, nk_rect(0, 0, S->surf->w, S->surf->h));
     scrollbar(nk_rect(area.x, y, area.w, area.y + area.h - y), S->detail_scroll, vis, S->detail_lines);
 
-    softkeys(inst ? "Open" : NULL, inst ? "UPDATE" : "INSTALL", "Back");
+    softkeys(inst ? "Open" : NULL, inst ? "Update" : "Install", "Back");
 }
 
 static void draw_settings(void)
@@ -832,7 +876,7 @@ static void draw_settings(void)
                  NULL, val[0] ? val : NULL, T.dim);
     }
     scrollbar(area, S->settings_top, rows, SET_COUNT);
-    softkeys(NULL, S->settings_sel <= SET_TIMEOUT ? NULL : "SELECT", "Back");
+    softkeys(NULL, S->settings_sel <= SET_TIMEOUT ? NULL : "Select", "Back");
 }
 
 static void draw_wifi(void)
@@ -857,7 +901,7 @@ static void draw_wifi(void)
         list_row(nk_rect(area.x, area.y + r * ROW_H, area.w, ROW_H), i == S->wifi_sel, S->wifi_ssid[i],
                  NULL, right, T.dim);
     }
-    softkeys("Rescan", "CONNECT", "Back");
+    softkeys("Rescan", "Connect", "Back");
 }
 
 static void draw_sysinfo(void)
@@ -891,7 +935,7 @@ static void draw_dialer(void)
           S->dial[0] ? S->dial : "Enter number", S->fonts.large, S->dial[0] ? T.text : T.dim, AL_CENTER);
     if (S->call_active)
         label(nk_rect(0, area.y + 110, area.w, 20), "Press End to hang up", S->fonts.small, T.dim, AL_CENTER);
-    softkeys(S->dial[0] ? "Clear" : NULL, "CALL", "Back");
+    softkeys(S->dial[0] ? "Clear" : NULL, "Call", "Back");
 }
 
 static void draw_input(void)
@@ -905,10 +949,10 @@ static void draw_input(void)
     header(title, t9_mode_label(&S->t9));
     if (S->input == INPUT_WIFI_PSK)
         label(nk_rect(10, area.y + 6, area.w - 20, 20), S->wifi_target, S->fonts.small, T.dim, AL_LEFT);
-    fill(nk_rect(8, fy, area.w - 16, 34), 4, T.panel);
-    nk_stroke_rect(cv, nk_rect(8, fy, area.w - 16, 34), 4, 1, C(T.accent));
+    fill(nk_rect(8, fy, area.w - 16, 34), 2, 0xf2f4f6);
+    nk_stroke_rect(cv, nk_rect(8, fy, area.w - 16, 34), 2, 1, C(0x7f8d9a));
     snprintf(shown, sizeof(shown), "%s|", S->t9.text);
-    label(nk_rect(16, fy, area.w - 32, 34), shown, S->fonts.normal, T.text, AL_LEFT);
+    label(nk_rect(16, fy, area.w - 32, 34), shown, S->fonts.normal, T.ink, AL_LEFT);
     if (S->input == INPUT_SEARCH) {
         int tmp[512];
         char res[32];
@@ -932,10 +976,11 @@ static void draw_menu(void)
     /* dim the screen underneath */
     nk_fill_rect(cv, nk_rect(0, SB_H, w, S->surf->h - SB_H), 0, nk_rgba(0, 0, 0, 170));
     fill(nk_rect(0, my, w, mh), 0, T.panel);
-    label(nk_rect(10, my, w - 20, 34), title, S->fonts.normal, T.dim, AL_CENTER);
+    chrome(nk_rect(0, my, w, 32));
+    label(nk_rect(10, my, w - 20, 32), title, S->fonts.normal, T.ink, AL_LEFT);
     for (int i = 0; i < n; i++)
         list_row(nk_rect(0, my + 34 + i * ROW_H, w, ROW_H), i == S->menu_sel, items[i], NULL, NULL, 0);
-    softkeys(NULL, "SELECT", "Cancel");
+    softkeys(NULL, "Select", "Cancel");
 }
 
 static void draw_screen(enum screen scr)

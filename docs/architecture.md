@@ -46,6 +46,12 @@ Memory rules the shell follows:
   writes to the framebuffer if the command list hash differs from the last
   frame.
 
+The look follows Nokia S40/S30+: black background, brushed-chrome title and
+soft-key bars, pale silver-blue selection bars, pastel icon tiles in a chrome
+focus frame, and the focused app's name in the title bar of the menu grid.
+The theme lives in the `T` table and the `chrome()`/`highlight()` helpers at
+the top of `ui.c`.
+
 Keys work as on KaiOS:
 
 * The soft keys run the actions labelled at the bottom of the screen.
