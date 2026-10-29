@@ -34,7 +34,7 @@ jobs:
       - name: Compress large images
         run: |
           cd out/phone/vortex-nokia-6300-4g
-          sudo chown -R "$(id -u)" .
+          sudo chown -R "$(id -u):$(id -g)" .
           xz -T0 -6 userdata.img vortex-sdcard.img vortex-rootfs.simg
           sha256sum boot-partition.img lk2nd.img vortex-boot.img userdata.img.xz \
             vortex-sdcard.img.xz vortex-rootfs.simg.xz > SHA256SUMS
