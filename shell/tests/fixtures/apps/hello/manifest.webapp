@@ -1,0 +1,1 @@
+{"name": "Hello KaiOS", "description": "Fixture app", "launch_path": "/index.html", "type": "privileged", "icons": {"56": "/icon56.png", "112": "/icon112.png"}, "developer": {"name": "Vortex"}}

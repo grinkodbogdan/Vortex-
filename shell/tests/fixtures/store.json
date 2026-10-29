@@ -1,0 +1,518 @@
+{
+ "$schema": "./schema.json",
+ "version": 3,
+ "generated_at": 1759563285031,
+ "categories": {
+  "communication": {
+   "name": "Communication",
+   "description": "Apps that allow you to communicate with other people.",
+   "icon": "fas fa-comments"
+  },
+  "education": {
+   "name": "Education",
+   "description": "Apps that provide access to Education sources.",
+   "icon": "fas fa-book-reader"
+  },
+  "games": {
+   "name": "Games",
+   "description": "Test your finger speed.",
+   "icon": "fas fa-gamepad"
+  },
+  "health": {
+   "name": "Health",
+   "description": "Health related utilities",
+   "icon": "fas fa-file-medical"
+  },
+  "multimedia": {
+   "name": "Multimedia",
+   "description": "Apps to help with entertainment",
+   "icon": "fas fa-film"
+  },
+  "news": {
+   "name": "News",
+   "description": "Apps that provide access to news sources.",
+   "icon": "fas fa-newspaper"
+  },
+  "search": {
+   "name": "Search",
+   "icon": "fas fa-search"
+  },
+  "social": {
+   "name": "Social",
+   "icon": "fas fa-users"
+  },
+  "travel": {
+   "name": "Travel",
+   "description": "Useful tools for traveling",
+   "icon": "fas fa-plane"
+  },
+  "utility": {
+   "name": "Utility",
+   "description": "Utilities to help with daily functions.",
+   "icon": "fas fa-wrench"
+  }
+ },
+ "apps": [
+  {
+   "name": "10000h",
+   "description": "Strengthen your skills with 10000 hours rule.",
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/10000h.png",
+   "git_repo": "https://github.com/canicjusz/10000h",
+   "download": {
+    "url": "https://github.com/canicjusz/10000h/raw/master/10000h.zip",
+    "manifest": "https://gitlab.com/banana-hackers/store-db/-/raw/master/apps/10000h.json"
+   },
+   "type": "privileged",
+   "license": "WTFPL",
+   "author": [
+    "Jan Michalak"
+   ],
+   "maintainer": [
+    "Jan Michalak"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "self-development; self-impovement",
+    "categories": [
+     "utility"
+    ]
+   },
+   "slug": "10000h",
+   "screenshots": []
+  },
+  {
+   "name": "Store Client",
+   "description": "An almost universal client for KaiOS app stores. Supports both KaiStore and B-Hackers Store. Can update apps via Self-Debugging and falls back to OmniSD method if Self-Debugging is unavailable. Spoofs your IMEI and other personal data when accessing KaiStore.",
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/storeclient.png",
+   "git_repo": "https://gitlab.com/affenull2345/store-client",
+   "download": {
+    "url": "https://affenull2345.gitlab.io/store-client/store.zip",
+    "manifest": "https://affenull2345.gitlab.io/store-client/manifest.webapp"
+   },
+   "type": "certified",
+   "license": "Apache-2.0",
+   "author": [
+    "Affe Null"
+   ],
+   "maintainer": [
+    "Affe Null"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "appstore; bhackers;",
+    "categories": [
+     "utility"
+    ]
+   },
+   "slug": "storeclient",
+   "screenshots": []
+  },
+  {
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/Accessibility_Suite.png",
+   "name": "Accessibility Suite",
+   "author": [
+    "arma7x"
+   ],
+   "website": "https://www.kaiostech.com",
+   "description": "Accessibility Suite is an app for visually impaired or blind person. Available features are date and time, battery, geolocation services and weather forecast",
+   "maintainer": [
+    "Cyan"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "accessibility;suite;",
+    "categories": [
+     "utility"
+    ]
+   },
+   "type": "packaged",
+   "license": "Unknown",
+   "download": {
+    "url": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/Accessibility%20Suite/Accessibility%20Suite.zip",
+    "manifest": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/Accessibility%20Suite/manifest.webapp"
+   },
+   "slug": "Accessibility_Suite",
+   "screenshots": []
+  },
+  {
+   "name": "Convo",
+   "description": "A basic XMPP messaging client for KaiOS supporting sending messages to existing contacts and joining existing groupchats. The app is a bit limited on its own, but works well along with a companion desktop app.",
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/Convo.png",
+   "screenshots": [
+    "https://banana-hackers.gitlab.io/store-db/icons/Convo/screenshot0.png",
+    "https://banana-hackers.gitlab.io/store-db/icons/Convo/screenshot1.png",
+    "https://banana-hackers.gitlab.io/store-db/icons/Convo/screenshot2.png",
+    "https://banana-hackers.gitlab.io/store-db/icons/Convo/screenshot3.png"
+   ],
+   "git_repo": "https://git.disroot.org/badrihippo/convo",
+   "website": "https://convo.fsci.in",
+   "download": {
+    "url": "https://convo.fsci.in/downloads/convo-0.2.0-kaios2-omnisd.zip",
+    "manifest": "https://convo.fsci.in/repos/convo/public/manifest.webapp"
+   },
+   "type": "packaged",
+   "license": "GPL-3-or-later",
+   "author": [
+    "Badri Sunderarajan"
+   ],
+   "maintainer": [
+    "Badri Sunderarajan"
+   ],
+   "donation": "https://git.disroot.org/badrihippo/convo#donations",
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "xmpp; xmpp-client; chat; messaging;",
+    "categories": [
+     "communication",
+     "social"
+    ]
+   },
+   "slug": "Convo"
+  },
+  {
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/Cricket_Highlight.png",
+   "name": "Cricket Highlight",
+   "author": [
+    "arma7x"
+   ],
+   "website": "https://www.kaiostech.com",
+   "description": "Watch free HD cricket match highlights and replay extended video online from top leagues around the world",
+   "maintainer": [
+    "Cyan"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "cricket;highlight;",
+    "categories": [
+     "games"
+    ]
+   },
+   "type": "packaged",
+   "license": "Unknown",
+   "download": {
+    "url": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/Cricket%20Highlight/Cricket%20Highlight.zip",
+    "manifest": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/Cricket%20Highlight/manifest.webapp"
+   },
+   "slug": "Cricket_Highlight",
+   "screenshots": []
+  },
+  {
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/Football_Highlight.png",
+   "name": "Football Highlight",
+   "author": [
+    "arma7x"
+   ],
+   "website": "https://www.kaiostech.com",
+   "description": "Watch free HD football match highlights and replay extended video goals online from top leagues around the world",
+   "maintainer": [
+    "Cyan"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "football;highlight;",
+    "categories": [
+     "games"
+    ]
+   },
+   "type": "packaged",
+   "license": "Unknown",
+   "download": {
+    "url": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/Football%20Highlight/Football%20Highlight.zip",
+    "manifest": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/Football%20Highlight/manifest.webapp"
+   },
+   "slug": "Football_Highlight",
+   "screenshots": []
+  },
+  {
+   "name": "FoxCast Lite",
+   "description": "Foxcasts is an app for subscribing to and listening to podcasts.  It started off on FirefoxOS and has been twice rebuilt from the ground up using different frameworks for KaiOS and as a general web app. Navigation\n    Browser\n        All interaction is done using the keyboard.\n        Arrows keys to navigate lists and tabs\n        1-9 are used as shortcuts in grids and lists\n        Backspace to navigate back a screen\n        Enter to perform the displayed action\n        Shift+LeftArrow and Shift+RightArrow to trigger left and right nav bar actions\n    On Device\n        Use the d-pad to navigate lists and tabs\n        1-9 are used as shortcuts in grids and lists\n        \n",
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/FoxCastLite.png",
+   "screenshots": [
+    "https://banana-hackers.gitlab.io/store-db/icons/FoxCastLite/screenshot0.png"
+   ],
+   "website": "https://garrettdowns.com",
+   "download": {
+    "url": "https://github.com/JuanCarlosM1/Apps-Download/blob/main/Foxcast-Lite.zip?raw=true",
+    "manifest": "https://raw.githubusercontent.com/JuanCarlosM1/Apps-Download/main/manifest/foxcast.webapp"
+   },
+   "git_repo": "https://github.com/garredow/foxcasts-lite",
+   "type": "privileged",
+   "license": "unknown",
+   "author": [
+    "Garrett Downs"
+   ],
+   "maintainer": [
+    "JuanCarlosM1"
+   ],
+   "locales": [
+    "English"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "podcasts; audio; news; Fox; Cast; Lite; mica",
+    "categories": [
+     "news",
+     "multimedia"
+    ]
+   },
+   "slug": "FoxCastLite"
+  },
+  {
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/IPTV_Tube.png",
+   "name": "IPTV Tube",
+   "author": [
+    "arma7x"
+   ],
+   "website": "https://www.kaiostech.com",
+   "description": "Watch free iptv channels from around the world on KaiOS for free",
+   "maintainer": [
+    "Cyan"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "iptv;tube;",
+    "categories": [
+     "multimedia"
+    ]
+   },
+   "type": "packaged",
+   "license": "Unknown",
+   "download": {
+    "url": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/IPTV%20Tube/IPTV%20Tube.zip",
+    "manifest": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/IPTV%20Tube/manifest.webapp"
+   },
+   "slug": "IPTV_Tube",
+   "screenshots": []
+  },
+  {
+   "name": "Mica",
+   "description": "Minimalist podcast app for KaiOS. Design inspired by MuditaOS.",
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/Mica.png",
+   "screenshots": [
+    "https://banana-hackers.gitlab.io/store-db/icons/Mica/screenshot0.png"
+   ],
+   "website": "https://nothing.dev/",
+   "git_repo": "https://github.com/garredow/mica",
+   "download": {
+    "url": "https://github.com/JuanCarlosM1/Apps-Download/blob/main/mica.zip?raw=true",
+    "manifest": "https://raw.githubusercontent.com/garredow/mica/main/public/manifest.webapp"
+   },
+   "type": "privileged",
+   "locales": [
+    "English"
+   ],
+   "license": "unknown",
+   "author": [
+    "Garrett Downs"
+   ],
+   "maintainer": [
+    "JuanCarlosM1"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "pod;cast;audio;news;fox;casts;lite;mica",
+    "categories": [
+     "multimedia",
+     "news"
+    ]
+   },
+   "slug": "Mica"
+  },
+  {
+   "name": "Pock",
+   "description": "A Pocket client for KaiOS.",
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/Pock.png",
+   "screenshots": [
+    "https://banana-hackers.gitlab.io/store-db/icons/Pock/screenshot0.png"
+   ],
+   "website": "https://nothing.dev",
+   "git_repo": "https://github.com/garredow/pock",
+   "download": {
+    "url": "https://github.com/JuanCarlosM1/Apps-Download/blob/64c6bcbf85d85deeaaa579906c32f261d8fe81ce/Pock.zip",
+    "manifest": "https://raw.githubusercontent.com/garredow/pock/main/public/manifest.webapp"
+   },
+   "type": "privileged",
+   "locales": [
+    "English"
+   ],
+   "license": "unknown",
+   "author": [
+    "Garrett Downs"
+   ],
+   "maintainer": [
+    "JuanCarlosM1"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "Pock",
+    "categories": [
+     "utility"
+    ]
+   },
+   "slug": "Pock"
+  },
+  {
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/PodKast.png",
+   "name": "PodKast",
+   "author": [
+    "arma7x"
+   ],
+   "website": "https://www.kaiostech.com",
+   "description": "With PodKast, you can play the latest episodes from your favourite shows, explore podcast recommendations just for you and manage your listening activity.",
+   "maintainer": [
+    "Cyan"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "podkast;",
+    "categories": [
+     "multimedia"
+    ]
+   },
+   "type": "packaged",
+   "license": "Unknown",
+   "download": {
+    "url": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/PodKast/PodKast.zip",
+    "manifest": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/PodKast/manifest.webapp"
+   },
+   "slug": "PodKast",
+   "screenshots": []
+  },
+  {
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/PoetryDB.png",
+   "name": "PoetryDB",
+   "author": [
+    "arma7x"
+   ],
+   "website": "https://www.kaiostech.com",
+   "description": "Motivate your self by random advice, inspiration quotes and read collection of sonnets and poems from famous writers",
+   "maintainer": [
+    "Cyan"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "poetrydb;",
+    "categories": [
+     "education"
+    ]
+   },
+   "type": "packaged",
+   "license": "Unknown",
+   "download": {
+    "url": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/PoetryDB/PoetryDB.zip",
+    "manifest": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/PoetryDB/manifest.webapp"
+   },
+   "slug": "PoetryDB",
+   "screenshots": []
+  },
+  {
+   "name": "RainCloud",
+   "description": "A SoundCloud client for KaiOS. - Some things to know 1 - Right Soft Key (RSK) while a list item is selected will open its context menu, where you can choose to play. 2 - Left Soft Key (LSK) opens the app menu. 3 - With the player open, Left will skip back 10 seconds, Right will skip forward 30 seconds, while Up and Down control volume. - How to use 1 - On your computer, visit the RainCloud website to sign into SoundCloud. 2 - In the app, select 'Sign In via QR Code' and scan the code on your screen. *You may have to exit and reopen the app to scan the code after giving permission. 3 - When you scan the code, you're in!",
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/RainCloud.svg",
+   "screenshots": [
+    "https://banana-hackers.gitlab.io/store-db/icons/RainCloud/screenshot0.png"
+   ],
+   "website": "https://nothing.dev/",
+   "git_repo": "https://github.com/garredow/raincloud",
+   "download": {
+    "url": "https://github.com/JuanCarlosM1/Apps-Download/blob/main/RainCloud.zip?raw=true",
+    "manifest": "https://raw.githubusercontent.com/garredow/raincloud/main/public/manifest.webapp"
+   },
+   "type": "privileged",
+   "locales": [
+    "English"
+   ],
+   "license": "unknown",
+   "author": [
+    "Garrett Downs"
+   ],
+   "maintainer": [
+    "JuanCarlosM1"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "sound;cloud;music;audio;client;",
+    "categories": [
+     "multimedia"
+    ]
+   },
+   "slug": "RainCloud"
+  },
+  {
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/Trivia_Quiz.png",
+   "name": "Trivia Quiz",
+   "author": [
+    "arma7x"
+   ],
+   "website": "https://www.kaiostech.com",
+   "description": "Get smarter every day by answering online quizzes & improve your knowledge in various fields",
+   "maintainer": [
+    "Cyan"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "trivia;quiz;",
+    "categories": [
+     "education"
+    ]
+   },
+   "type": "packaged",
+   "license": "Unknown",
+   "download": {
+    "url": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/Trivia%20Quiz/Trivia%20Quiz.zip",
+    "manifest": "https://raw.githubusercontent.com/cyan-2048/_store/main/arma7x/Trivia%20Quiz/manifest.webapp"
+   },
+   "slug": "Trivia_Quiz",
+   "screenshots": []
+  },
+  {
+   "name": "Wordly",
+   "description": "A quick, rough clone of a popular word game. Now available on the KaiStore! - How to play 1 - Use the d-pad to switch between letters. 2 - The number keys can be used to jump to letters. 3 - For example, pressing the 6 key will cycle through \"m\", \"n\", and \"o\".",
+   "icon": "https://banana-hackers.gitlab.io/store-db/icons/Wordly.png",
+   "screenshots": [
+    "https://banana-hackers.gitlab.io/store-db/icons/Wordly/screenshot0.png",
+    "https://banana-hackers.gitlab.io/store-db/icons/Wordly/screenshot1.png"
+   ],
+   "website": "https://nothing.dev",
+   "git_repo": "https://github.com/garredow/wordly",
+   "download": {
+    "url": "https://github.com/JuanCarlosM1/Apps-Download/blob/main/Wordly-Kaios2.zip?raw=true",
+    "manifest": "https://raw.githubusercontent.com/garredow/wordly/main/manifest.webapp"
+   },
+   "type": "hosted",
+   "locales": [
+    "English"
+   ],
+   "license": "unknown",
+   "author": [
+    "Garrett Downs"
+   ],
+   "maintainer": [
+    "JuanCarlosM1"
+   ],
+   "has_ads": false,
+   "has_tracking": false,
+   "meta": {
+    "tags": "wordly;game;word;",
+    "categories": [
+     "games"
+    ]
+   },
+   "slug": "Wordly"
+  }
+ ]
+}

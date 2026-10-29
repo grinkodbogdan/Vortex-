@@ -1,0 +1,7 @@
+shell/build/
+shell/vortex-shell
+shell/vortex-shell-headless
+shell/tests/out/
+out/
+work/
+*.o
