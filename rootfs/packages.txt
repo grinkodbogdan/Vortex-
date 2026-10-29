@@ -1,11 +1,11 @@
-# Packages installed into the Vortex root filesystem (armv7l-musl).
+# Packages installed into the Vortex root filesystem (Void armv7l-musl).
 # One per line; '#' starts a comment.  Keep this list short: every daemon
 # that stays resident costs RAM on a 512 MB phone.
 
 # Base system: runit init, musl, coreutils & friends
 base-files
 runit-void
-musl
+dash
 coreutils
 findutils
 diffutils
@@ -18,14 +18,13 @@ util-linux
 kmod
 eudev
 e2fsprogs
-dosfstools
 shadow
 opendoas
 xbps
 ncurses-base
 tzdata
 
-# Networking (Wi-Fi + USB networking for development)
+# Networking
 iproute2
 wpa_supplicant
 dhcpcd
@@ -35,12 +34,20 @@ curl
 # Store / app installer
 unzip
 
-# Web runtime for KaiOS apps (built from packaging/void/srcpkgs)
-wpewebkit
-cog
+# Web runtime for KaiOS apps.  Void ships WebKitGTK (not WPE) for armv7,
+# so the phone uses the same engine as the VM: WebKitGTK in the Cage kiosk
+# compositor (runtime/vortex-webview-cage).  packaging/void/srcpkgs has
+# WPE/Cog templates for a lighter engine later.
+libwebkit2gtk41
+python3-gobject
+cage
+seatd
 mesa-dri
-libinput
+dejavu-fonts-ttf
+xkeyboard-config
+gst-plugins-base1
 gst-plugins-good1
+gst-libav
 
 # Qualcomm MSM8909 modem/Wi-Fi userspace
 qrtr-ns

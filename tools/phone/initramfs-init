@@ -1,0 +1,31 @@
+#!/bin/busybox sh
+# Vortex initramfs: find the root filesystem by its label and switch to it.
+# The same boot image works with the rootfs on a microSD card or flashed to
+# the internal "userdata" partition.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+say() { echo "vortex-init: $*" > /dev/kmsg; }
+
+root=
+i=0
+while [ $i -lt 100 ]; do            # up to 10 s for the SD card to show up
+	root=$(findfs LABEL=vortex 2>/dev/null) && [ -n "$root" ] && break
+	sleep 0.1
+	i=$((i + 1))
+done
+if [ -z "$root" ]; then
+	say "no partition labelled 'vortex' found; dropping to a shell on the serial console"
+	exec sh
+fi
+say "root is $root"
+mkdir -p /newroot
+if ! mount -t ext4 -o rw,noatime "$root" /newroot; then
+	say "cannot mount $root"
+	exec sh
+fi
+umount /proc /sys
+mount --move /dev /newroot/dev
+exec switch_root /newroot /sbin/init

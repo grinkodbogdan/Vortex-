@@ -1,82 +1,111 @@
 #!/bin/sh
 # Build the Vortex root filesystem for the Nokia 6300 4G (armv7l-musl).
 #
-#   sudo rootfs/build.sh [OPTIONS]
+#   sudo rootfs/build.sh [-o OUTDIR] [-m MIRROR]
 #
-#   -o DIR     output directory (default: out/)
-#   -r REPO    extra xbps repository, e.g. void-packages/hostdir/binpkgs
-#              holding the wpewebkit and cog packages (repeatable)
-#   -k DIR     kernel build dir from kernel/build.sh (default: out/kernel)
-#   -m MIRROR  Void mirror (default: https://repo-default.voidlinux.org)
+# How it works without an ARM machine or emulator:
+#   - Void armv7 packages are *unpacked only* (xbps-install -U); nothing ARM
+#     runs at build time.  The phone runs xbps-reconfigure on first boot
+#     (core-services/00-vortex-firstboot.sh).
+#   - The kernel and modules are postmarketOS' prebuilt
+#     linux-postmarketos-qcom-msm8916 (covers MSM8909), unpacked from the apk.
+#   - vortex-shell is cross-compiled with clang against a Void musl sysroot.
+#   - The panel init firmware is compiled with tools/phone/mipi-dbi-fw.py.
 #
-# Requirements (host): xbps (or xbps-static), qemu-arm user emulation with
-# binfmt_misc, an armv7l-linux-musleabihf cross compiler, python3, curl.
-# On Void: xbps-install xbps qemu-user-static binfmt-support
-#          cross-armv7l-linux-musleabihf python3 curl
-#
-# Output: DIR/rootfs/ (the tree) and DIR/vortex-rootfs.tar.gz.
-# Disk images are made by rootfs/mkimage.sh.
+# Needs (host): root, curl, tar, clang + lld, make, python3.
+# Output: OUTDIR/rootfs/ and OUTDIR/kernel/ (zImage, dtbs, modules).
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/.." && pwd)
-OUT=$TOP/out
-KDIR=
-MIRROR=https://repo-default.voidlinux.org
-REPOS=
-ARCH=armv7l-musl
-CROSS=${CROSS:-armv7l-linux-musleabihf-}
-
-# Pinned postmarketOS revision for the panel init sequence.
-PMAPORTS=690ccca91f4b5d60bd9e306f8449cd80e3daf682
-PANEL=nokia,leo-gc9305-hlt-24-panel
-MIPI_DBI_CMD=1cbd40135a8c7f25d7b444a7fac77fd3c3ad471e
-
-while getopts o:r:k:m: opt; do
+OUT=$TOP/out/phone
+MIRROR=${MIRROR:-https://repo-default.voidlinux.org}
+while getopts o:m: opt; do
 	case $opt in
 	o) OUT=$OPTARG ;;
-	r) REPOS="$REPOS -R $OPTARG" ;;
-	k) KDIR=$OPTARG ;;
 	m) MIRROR=$OPTARG ;;
 	*) exit 2 ;;
 	esac
 done
-KDIR=${KDIR:-$OUT/kernel}
 ROOT=$OUT/rootfs
+SYS=$OUT/sysroot
+K=$OUT/kernel
+export XBPS_ARCH=armv7l-musl
+
+# Pinned inputs
+PMOS=https://mirror.postmarketos.org/postmarketos/master/armv7
+KPKG=linux-postmarketos-qcom-msm8916-6.12.1-r7
+KVER=6.12.1-msm8916
+LK2ND=lk2nd-msm8916-23.1-r0
+GPUFW=firmware-qcom-adreno-a300-20260110-r1
+PMAPORTS=690ccca91f4b5d60bd9e306f8449cd80e3daf682
+PANEL=nokia,leo-gc9305-hlt-24-panel
+DTB=qcom-msm8909-nokia-leo.dtb
 
 msg() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-
 [ "$(id -u)" = 0 ] || die "run as root (file ownership in the image)"
-command -v xbps-install >/dev/null || command -v xbps-install.static >/dev/null || die "xbps not found"
-XI=$(command -v xbps-install || command -v xbps-install.static)
-QEMU=$(command -v qemu-arm-static || command -v qemu-arm || true)
-[ -n "$QEMU" ] || die "qemu-arm user emulation not found"
-
 mkdir -p "$OUT"
+
+# ------------------------------------------------------------------ xbps
+XI=$OUT/xbps/usr/bin/xbps-install.static
+if [ ! -x "$XI" ]; then
+	msg "fetching static xbps"
+	mkdir -p "$OUT/xbps"
+	curl -fsSL "$MIRROR/static/xbps-static-latest.x86_64-musl.tar.xz" | tar -xJ -C "$OUT/xbps"
+fi
+xbps_unpack() { # ROOTDIR PKG...
+	r=$1; shift
+	mkdir -p "$r"
+	# keep downloads across rebuilds
+	yes | "$XI" -S -U -r "$r" -c "$OUT/xbps-cache" -R "$MIRROR/current/musl" "$@" \
+		>"$OUT/xbps-$(basename "$r").log" 2>&1 ||
+		grep -q "already installed" "$OUT/xbps-$(basename "$r").log" ||
+		{ tail -20 "$OUT/xbps-$(basename "$r").log"; die "xbps failed"; }
+}
+
+msg "unpacking Void armv7l-musl packages (not configured until first boot)"
 rm -rf "$ROOT"
-mkdir -p "$ROOT/var/db/xbps/keys"
-cp -a /var/db/xbps/keys/. "$ROOT/var/db/xbps/keys/" 2>/dev/null || true
+xbps_unpack "$ROOT" $(sed 's/#.*//' "$HERE/packages.txt")
+[ -e "$ROOT/usr/bin/sh" ] || ln -s dash "$ROOT/usr/bin/sh"
 
-# ---------------------------------------------------------------- packages
-PKGS=$(sed 's/#.*//' "$HERE/packages.txt" | tr -s ' \n' ' ')
-msg "installing packages for $ARCH"
-# shellcheck disable=SC2086 # word lists on purpose
-XBPS_ARCH=$ARCH "$XI" -S -y -r "$ROOT" \
-	-R "$MIRROR/current/musl" $REPOS $PKGS
+# ---------------------------------------------------------------- kernel
+msg "fetching postmarketOS kernel, lk2nd and GPU firmware"
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+for p in $KPKG $LK2ND $GPUFW; do
+	curl -fsSL -o "$T/$p.apk" "$PMOS/$p.apk"
+	mkdir -p "$T/$p"
+	tar -xzf "$T/$p.apk" -C "$T/$p" --ignore-zeros 2>/dev/null || true
+done
+rm -rf "$K"
+mkdir -p "$K/dtbs"
+cp "$T/$KPKG/boot/vmlinuz" "$K/zImage"
+cp "$T/$KPKG/boot/dtbs/$DTB" "$K/dtbs/"
+cp "$T/$KPKG/boot/config" "$K/config"
+echo "$KVER" > "$K/kernel.release"
+cp "$T/$LK2ND/boot/lk2nd.img" "$K/lk2nd.img"
+mkdir -p "$ROOT/usr/lib/modules"
+cp -a "$T/$KPKG/usr/lib/modules/$KVER" "$ROOT/usr/lib/modules/"
+cp -a "$T/$GPUFW/usr/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null ||
+	cp -a "$T/$GPUFW/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null || true
 
-msg "configuring packages under qemu"
-cp "$QEMU" "$ROOT/usr/bin/"
-chroot "$ROOT" /usr/bin/xbps-reconfigure -fa
+msg "panel init sequence"
+curl -fsSL -o "$T/panel.txt" \
+	"https://gitlab.postmarketos.org/postmarketOS/pmaports/-/raw/$PMAPORTS/device/archived/device-nokia-leo/$PANEL.txt"
+mkdir -p "$ROOT/usr/lib/firmware"
+python3 "$TOP/tools/phone/mipi-dbi-fw.py" "$ROOT/usr/lib/firmware/$PANEL.bin" "$T/panel.txt"
 
-# ------------------------------------------------------------------ vortex
-msg "building vortex-shell (static)"
-make -C "$TOP/shell" clean >/dev/null
-make -C "$TOP/shell" CC="${CROSS}gcc" CFLAGS="-Os -pipe" LDFLAGS="-static -s"
+# ---------------------------------------------------------------- vortex
+msg "cross-compiling vortex-shell (armv7, static)"
+xbps_unpack "$SYS" musl-devel kernel-libc-headers gcc busybox-static
+CC="clang --target=armv7l-linux-musleabihf --sysroot=$SYS -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard"
+make -s -C "$TOP/shell" clean
+make -s -C "$TOP/shell" CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
 install -Dm755 "$TOP/shell/vortex-shell" "$ROOT/usr/bin/vortex-shell"
-make -C "$TOP/shell" clean >/dev/null
+make -s -C "$TOP/shell" clean
 
-for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call; do
+for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage; do
 	install -Dm755 "$TOP/runtime/$f" "$ROOT/usr/libexec/vortex/$f"
 done
 install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
@@ -85,37 +114,27 @@ install -Dm644 "$TOP/runtime/kaios-shim.js" "$ROOT/usr/share/vortex/kaios-shim.j
 install -Dm644 "$TOP/assets/fonts/Roboto-Regular.ttf" "$ROOT/usr/share/vortex/fonts/Roboto-Regular.ttf"
 cp -a "$HERE/overlay/." "$ROOT/"
 chmod 600 "$ROOT/etc/doas.conf"
+cat >> "$ROOT/etc/vortex/runtime.conf" <<'EOF'
 
-# ------------------------------------------------------------ device bits
-msg "generating the panel init sequence"
-T=$(mktemp -d)
-trap 'rm -rf "$T"' EXIT
-curl -fsSL -o "$T/panel.txt" \
-	"https://gitlab.postmarketos.org/postmarketOS/pmaports/-/raw/$PMAPORTS/device/archived/device-nokia-leo/$PANEL.txt"
-curl -fsSL -o "$T/mipi-dbi-cmd" \
-	"https://raw.githubusercontent.com/notro/panel-mipi-dbi/$MIPI_DBI_CMD/mipi-dbi-cmd"
-python3 "$T/mipi-dbi-cmd" "$ROOT/usr/lib/firmware/$PANEL.bin" "$T/panel.txt"
-
-if [ -d "$KDIR/modules/lib/modules" ]; then
-	msg "installing kernel modules from $KDIR"
-	mkdir -p "$ROOT/usr/lib/modules"
-	cp -a "$KDIR/modules/lib/modules/." "$ROOT/usr/lib/modules/"
-	chroot "$ROOT" depmod -a "$(cat "$KDIR/kernel.release")"
-else
-	msg "no kernel modules in $KDIR (run kernel/build.sh first); continuing"
-fi
+# --- Void ships WebKitGTK (not WPE) for armv7: run it in Cage ---
+VORTEX_WEB_ENGINE=/usr/libexec/vortex/vortex-webview-cage
+EOF
 
 # ---------------------------------------------------------------- system
-msg "users, services, housekeeping"
-chroot "$ROOT" sh -c '
-	set -e
-	getent group vortex >/dev/null || groupadd -r vortex
-	id vortex >/dev/null 2>&1 || useradd -r -g vortex -G video,input,audio \
-		-d /var/lib/vortex -s /sbin/nologin vortex
-	install -d -o vortex -g vortex /var/lib/vortex /var/lib/vortex/apps \
-		/var/lib/vortex/data /var/cache/vortex
-	passwd -l root >/dev/null
-'
+msg "users, services, first-boot setup"
+# Packages are not configured yet, so add the shell's user by hand.  The
+# groups video/input/audio come with base-files.
+grep -q '^vortex:' "$ROOT/etc/group" || echo 'vortex:x:990:' >> "$ROOT/etc/group"
+grep -q '^vortex:' "$ROOT/etc/passwd" ||
+	echo 'vortex:x:990:990:Vortex shell:/var/lib/vortex:/sbin/nologin' >> "$ROOT/etc/passwd"
+grep -q '^vortex:' "$ROOT/etc/shadow" 2>/dev/null || echo 'vortex:!:19000::::::' >> "$ROOT/etc/shadow"
+for g in video input audio; do
+	sed -i "s/^\($g:[^:]*:[0-9]*:\)\(.*\)$/\1\2,vortex/; s/^\($g:[^:]*:[0-9]*:\),vortex$/\1vortex/" "$ROOT/etc/group"
+done
+mkdir -p "$ROOT/var/lib/vortex/apps" "$ROOT/var/lib/vortex/data" "$ROOT/var/cache/vortex/web"
+chown -R 990:990 "$ROOT/var/lib/vortex" "$ROOT/var/cache/vortex"
+touch "$ROOT/etc/vortex/.firstboot"
+
 echo vortex > "$ROOT/etc/hostname"
 cat >> "$ROOT/etc/rc.conf" <<'EOF'
 
@@ -125,31 +144,30 @@ TIMEZONE="UTC"
 VORTEX_UDEV_RESIDENT=0
 EOF
 cat > "$ROOT/etc/fstab" <<'EOF'
-# <device>      <dir>  <type>  <options>                    <dump> <pass>
+# The initramfs mounts LABEL=vortex as /.
 LABEL=vortex    /      ext4    rw,noatime,commit=60         0      1
-LABEL=VTXBOOT   /boot  ext2    rw,noatime,noauto            0      2
 tmpfs           /tmp   tmpfs   nosuid,nodev,size=32m        0      0
 EOF
 
-SVDIR=$ROOT/etc/runit/runsvdir/default
-rm -f "$SVDIR"/agetty-*
-for sv in vortex-shell wpa_supplicant dhcpcd; do
-	ln -sf "/etc/sv/$sv" "$SVDIR/$sv"
+SV=$ROOT/etc/runit/runsvdir/default
+mkdir -p "$SV"
+rm -f "$SV"/agetty-*
+for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv; do
+	[ -d "$ROOT/etc/sv/$s" ] && ln -sf "/etc/sv/$s" "$SV/$s"
 done
 # Wi-Fi starts off (vortex-wifi on brings it up): saves ~4 MB and battery.
 touch "$ROOT/etc/sv/wpa_supplicant/down" "$ROOT/etc/sv/dhcpcd/down"
-# Serial console for development only.
-[ "${VORTEX_SERIAL_GETTY:-0}" = 1 ] && ln -sf /etc/sv/agetty-ttyMSM0 "$SVDIR/"
+# Serial console (ttyMSM0, 115200) for development.
+if [ "${VORTEX_SERIAL_GETTY:-0}" = 1 ]; then
+	ln -sf /etc/sv/agetty-ttyMSM0 "$SV/" 2>/dev/null ||
+		{ cp -a "$ROOT/etc/sv/agetty-ttyS0" "$ROOT/etc/sv/agetty-ttyMSM0" && ln -sf /etc/sv/agetty-ttyMSM0 "$SV/"; }
+fi
 
 # Weight loss: docs, headers, static libs, locales.
 rm -rf "$ROOT/usr/share/man" "$ROOT/usr/share/doc" "$ROOT/usr/share/info" \
 	"$ROOT/usr/share/gtk-doc" "$ROOT/usr/include"
 find "$ROOT/usr/lib" -name '*.a' -delete
 find "$ROOT/usr/share/locale" -mindepth 1 -maxdepth 1 ! -name 'en*' -exec rm -rf {} + 2>/dev/null || true
-rm -f "$ROOT/usr/bin/$(basename "$QEMU")"
 rm -rf "$ROOT/var/cache/xbps"
-
-msg "packing"
-tar -C "$ROOT" -czf "$OUT/vortex-rootfs.tar.gz" .
 du -sh "$ROOT"
-msg "done: $OUT/vortex-rootfs.tar.gz"
+msg "done: $ROOT (next: rootfs/mkimage.sh)"

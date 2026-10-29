@@ -24,20 +24,11 @@ there. The dts and kernel are shared with the maintained `qcom-msm8909`
 generic port. The Nokia 8000 4G (`nokia-sparkler`) differs only in its panel
 and keypad wiring.
 
-## Flashing (outline)
+## Flashing
 
-> ⚠️ This replaces KaiOS. Back up the stock partitions first, especially
-> `modem` and `persist`: Vortex loads the Wi-Fi and modem firmware from them.
-
-1. Get EDL access and a firehose loader for the 6300 4G. The BananaHackers
-   and postmarketOS wikis cover this. Back up all partitions.
-2. Flash **lk2nd** (built for msm8909) to the `boot` partition.
-3. Write `out/vortex-nokia-leo.img` from `rootfs/mkimage.sh` to a microSD card.
-4. Boot. lk2nd finds `extlinux/extlinux.conf` on the SD card's first
-   partition and boots the kernel with `root=/dev/mmcblk1p2`.
-5. For development, `fastboot boot` works through lk2nd. For a console, set
-   `VORTEX_SERIAL_GETTY=1` when building to get a serial getty on `ttyMSM0`
-   (115200), or use USB networking.
+Build with `rootfs/build.sh` and `rootfs/mkimage.sh`, then follow
+[flashing.md](flashing.md). It covers backups, EDL, internal storage or
+microSD, the first boot and restoring KaiOS.
 
 ## Bring-up checklist and open problems
 
@@ -67,7 +58,10 @@ Tick these off on real hardware:
       There is also a third option: a small Vortex WPE backend that renders
       with Skia on the CPU into shared memory, and lets the shell blit it to
       fbdev. That would avoid EGL entirely.
-- [ ] **WPE WebKit/Cog build** for armv7l-musl. WebKit needs a lot of RAM and
+- [ ] **Web engine.** The image uses WebKitGTK in Cage (pixman renderer,
+      llvmpipe), as tested in the VM. It works without a GPU, but it is
+      heavier and slower than WPE/Cog would be. Later: **WPE WebKit/Cog build**
+      for armv7l-musl. WebKit needs a lot of RAM and
       time to cross-compile. JIT is off on armv7, so the C loop interpreter is
       used: slower, but smaller.
 - [ ] **Modem** over QRTR (`qrtr-ns`, `rmtfs`, `pd-mapper`, `tqftpserv`), then

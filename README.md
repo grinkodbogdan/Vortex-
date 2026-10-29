@@ -29,9 +29,8 @@ screen, T9 keypad) is the primary target.
 |---|---|
 | Shell (UI, launcher, store client, T9 input, settings, power menu) | Working. Tested headless on the host, clean under ASan/UBSan. |
 | KaiOS installer (OmniSD and plain zips) and JS shim | Working. Tested on the host; the shim is checked in Chromium. |
-| WPE WebKit and Cog packages for Void | Templates written, not built yet. |
-| Root filesystem and SD card image scripts | Written, not run on a phone yet. |
-| Kernel (msm8916-mainline + postmarketOS config) | Build script written, not booted yet. |
+| Phone image (`rootfs/build.sh`, `rootfs/mkimage.sh`) | Builds flashable files: lk2nd + boot image, a rootfs for `userdata` or a microSD card. **Not booted on a 6300 4G yet.** |
+| Web engine on the phone | WebKitGTK in Cage, the stack tested in the VM. WPE/Cog templates in `packaging/` are for later. |
 | x86_64 VM build (QEMU) | Boots. Store → install → run → close tested end to end with BankiTube. |
 | Calls and SMS | Experimental: a dialer UI plus an oFono helper. No incoming calls, no call audio routing. |
 
@@ -61,15 +60,15 @@ keys, Enter, F1/F2 (soft keys), Esc (back) and F4 (end) all work.
 ## Build the phone image
 
 ```sh
-kernel/build.sh                                # zImage, dtb, modules -> out/kernel
-./xbps-src pkg wpewebkit && ./xbps-src pkg cog # from a void-packages checkout with
-                                               # packaging/void/srcpkgs copied in
-sudo rootfs/build.sh -r /path/to/void-packages/hostdir/binpkgs
-rootfs/mkimage.sh                              # out/vortex-nokia-leo.img (SD card)
+sudo rootfs/build.sh       # Void armv7 rootfs + postmarketOS kernel -> out/phone/
+sudo rootfs/mkimage.sh     # flashable files -> out/phone/vortex-nokia-6300-4g/
 ```
 
-To flash it, see [docs/device-nokia-6300-4g.md](docs/device-nokia-6300-4g.md).
-It covers lk2nd, the SD card layout and how to get to a serial console.
+No ARM machine, emulator or kernel compile is needed. Void's armv7
+packages are unpacked on the PC and configured on the phone's first boot.
+The kernel and lk2nd are postmarketOS' prebuilt packages for MSM8909, and the
+shell is cross-compiled with clang. How to install the result (EDL, or a
+microSD card) is in [docs/flashing.md](docs/flashing.md).
 
 ## Layout
 

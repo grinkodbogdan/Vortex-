@@ -1,69 +1,87 @@
 #!/bin/sh
-# Make a bootable SD card image for lk2nd from the rootfs and kernel.
+# Turn the output of rootfs/build.sh into flashable images for the Nokia
+# 6300 4G.
 #
-#   rootfs/mkimage.sh [-o OUTDIR] [-s SIZE_MB] [-r ROOTDEV]
+#   sudo rootfs/mkimage.sh [-o OUTDIR] [-s ROOTFS_MB]
 #
-# ROOTDEV defaults to /dev/mmcblk1p2 (second partition of the SD card on
-# MSM8909).  The kernel boots without an initramfs, so it must be a device
-# path the kernel itself understands.
+# Writes OUTDIR/vortex-nokia-6300-4g/:
+#   boot-partition.img     lk2nd + Vortex boot image at +512 KiB -> "boot" (EDL)
+#   userdata.img           root filesystem (raw ext4)            -> "userdata" (EDL)
+#   vortex-sdcard.img      or: the root filesystem on a microSD card
+#   lk2nd.img, vortex-boot.img, vortex-rootfs.simg   the same pieces for
+#                          lk2nd's fastboot ("flash boot" / "flash userdata")
+#   FLASHING.md, SHA256SUMS
 #
-# Layout (msdos, as lk2nd expects on MSM8909):
-#   p1  ext2  VTXBOOT  64 MiB   extlinux/extlinux.conf, zImage, dtb
-#   p2  ext4  vortex   rest     the root filesystem
-#
-# No loop devices or root needed: filesystems are built with mke2fs -d and
-# spliced into the image with dd.  Requires e2fsprogs >= 1.43 and sfdisk.
+# The initramfs mounts whichever partition is labelled "vortex", so the
+# same boot image works with either root filesystem.
+# Needs: python3, mke2fs (e2fsprogs >= 1.43), sfdisk, img2simg, gzip.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=$HERE/../out
-SIZE=1024
-ROOTDEV=/dev/mmcblk1p2
-while getopts o:s:r: opt; do
+TOP=$(cd "$HERE/.." && pwd)
+OUT=$TOP/out/phone
+SIZE=
+while getopts o:s: opt; do
 	case $opt in
 	o) OUT=$OPTARG ;;
 	s) SIZE=$OPTARG ;;
-	r) ROOTDEV=$OPTARG ;;
 	*) exit 2 ;;
 	esac
 done
 ROOT=$OUT/rootfs
+SYS=$OUT/sysroot
 K=$OUT/kernel
 DTB=qcom-msm8909-nokia-leo.dtb
-BOOT_MB=64
+DIST=$OUT/vortex-nokia-6300-4g
+CMDLINE="console=ttyMSM0,115200 quiet loglevel=3 vt.global_cursor_default=0 firmware_class.path=/run/vortex/firmware"
 
+msg() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [ -d "$ROOT" ] || die "no rootfs in $ROOT (run rootfs/build.sh)"
-[ -f "$K/zImage" ] || die "no kernel in $K (run kernel/build.sh)"
-[ -f "$K/dtbs/$DTB" ] || die "missing $K/dtbs/$DTB"
-
+[ -f "$K/zImage" ] && [ -f "$K/dtbs/$DTB" ] || die "no kernel in $K (run rootfs/build.sh)"
+rm -rf "$DIST"
+mkdir -p "$DIST"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 
-mkdir -p "$T/boot/extlinux"
-cp "$K/zImage" "$T/boot/zImage"
-cp "$K/dtbs/$DTB" "$T/boot/$DTB"
-cat > "$T/boot/extlinux/extlinux.conf" <<EOF
-timeout 1
-default vortex
-label vortex
-	kernel /zImage
-	fdt /$DTB
-	append root=$ROOTDEV rootfstype=ext4 rootwait rw console=ttyMSM0,115200 quiet loglevel=3 firmware_class.path=/run/vortex/firmware
-EOF
+msg "initramfs"
+I=$T/initramfs
+mkdir -p "$I/bin" "$I/proc" "$I/sys" "$I/dev" "$I/newroot"
+cp "$ROOT/usr/bin/busybox.static" "$I/bin/busybox" 2>/dev/null ||
+	cp "$SYS/usr/bin/busybox.static" "$I/bin/busybox" 2>/dev/null ||
+	die "busybox.static missing (add busybox-static to the sysroot)"
+install -m755 "$TOP/tools/phone/initramfs-init" "$I/init"
+python3 "$TOP/tools/phone/mkcpio.py" "$I" "$T/initramfs.gz"
 
-ROOT_MB=$((SIZE - BOOT_MB - 1))
-mke2fs -q -t ext2 -L VTXBOOT -d "$T/boot" "$T/boot.img" "${BOOT_MB}M"
-mke2fs -q -t ext4 -L vortex -O ^metadata_csum,^64bit -d "$ROOT" "$T/root.img" "${ROOT_MB}M"
+msg "boot image"
+# lk2nd boots zImage with the device tree appended (pmOS deviceinfo for nokia-leo)
+cat "$K/zImage" "$K/dtbs/$DTB" > "$T/zImage-dtb"
+python3 "$TOP/tools/phone/mkbootimg.py" --kernel "$T/zImage-dtb" --ramdisk "$T/initramfs.gz" \
+	--cmdline "$CMDLINE" --base 0x80000000 --kernel-offset 0x00008000 \
+	--ramdisk-offset 0x02700000 --second-offset 0x00f00000 --tags-offset 0x02500000 \
+	--pagesize 2048 -o "$DIST/vortex-boot.img"
+cp "$K/lk2nd.img" "$DIST/lk2nd.img"
+# One image for the whole boot partition: lk2nd boots the Android boot image
+# it finds 512 KiB into the partition (where its own "fastboot flash boot"
+# would put it).
+[ "$(stat -c %s "$K/lk2nd.img")" -le 524288 ] || die "lk2nd.img is larger than 512 KiB"
+cp "$K/lk2nd.img" "$DIST/boot-partition.img"
+truncate -s 512K "$DIST/boot-partition.img"
+cat "$DIST/vortex-boot.img" >> "$DIST/boot-partition.img"
 
-IMG=$OUT/vortex-nokia-leo.img
-rm -f "$IMG"
-truncate -s "${SIZE}M" "$IMG"
-sfdisk -q "$IMG" <<EOF
-label: dos
-start=1MiB, size=${BOOT_MB}MiB, type=83, bootable
-start=$((1 + BOOT_MB))MiB, type=83
-EOF
-dd if="$T/boot.img" of="$IMG" bs=1M seek=1 conv=notrunc status=none
-dd if="$T/root.img" of="$IMG" bs=1M seek=$((1 + BOOT_MB)) conv=notrunc status=none
-echo "wrote $IMG"
+msg "root filesystem"
+used=$(du -sm "$ROOT" | cut -f1)
+SIZE=${SIZE:-$((used + used / 4 + 256))}     # room for apps and first-boot caches
+mke2fs -q -t ext4 -L vortex -O ^metadata_csum,^64bit -m 1 -d "$ROOT" "$T/rootfs.ext4" "${SIZE}M"
+img2simg "$T/rootfs.ext4" "$DIST/vortex-rootfs.simg"
+cp "$T/rootfs.ext4" "$DIST/userdata.img"
+
+msg "SD card image"
+truncate -s $((SIZE + 2))M "$DIST/vortex-sdcard.img"
+printf 'label: dos\nstart=1MiB, type=83\n' | sfdisk -q "$DIST/vortex-sdcard.img"
+dd if="$T/rootfs.ext4" of="$DIST/vortex-sdcard.img" bs=1M seek=1 conv=notrunc status=none
+
+cp "$TOP/docs/flashing.md" "$DIST/FLASHING.md"
+(cd "$DIST" && sha256sum boot-partition.img userdata.img vortex-sdcard.img lk2nd.img vortex-boot.img vortex-rootfs.simg > SHA256SUMS)
+ls -la "$DIST"
+msg "done: $DIST"
