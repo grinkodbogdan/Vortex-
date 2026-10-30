@@ -13,8 +13,14 @@
  *  - GCC has no ULTAUDIO/CODEC_DIGCODEC clocks; the digital codec core
  *    clock is set through the DSP (AFE_PARAM_ID_CLOCK_SET with
  *    INTERNAL_DIGITAL_CODEC_CORE, as msm8952.c does by default), at the
- *    9.6 MHz of qcom,msm-mclk-freq.  The AHB interface clock is the DSP's
- *    business: a placeholder satisfies the codec driver.
+ *    9.6 MHz of qcom,msm-mclk-freq.
+ *  - The primary MI2S bit clock must be set the same way (CLOCK_SET,
+ *    PRI_MI2S_IBIT, 1.536 MHz: msm8952.c mi2s_rx_clk).  The msm8916-qdsp6
+ *    sound card sends the older LPAIF_CLK_CONFIG, which this firmware
+ *    accepts but ignores: the stream then runs without the DSP taking any
+ *    data.  The digital codec's "ahbix-clk" (the AHB interface clock, which
+ *    the DSP handles on MSM8909) carries it instead, so it is on whenever
+ *    the codec is.
  *  - PDM lines: gpio59-64, function cdc_pdm0 (msm8909-pinctrl.dtsi).
  *  - Codec supplies: L5 (1.8 V) for I/O and RX/TX, L13 (3.075 V) for the
  *    mic bias (msm-pm8909.dtsi).
@@ -27,13 +33,6 @@
 #include <dt-bindings/sound/qcom,q6voice.h>
 
 / {
-	/* The LPASS AHB interface is clocked by the DSP on MSM8909. */
-	lpass_ahbix_clk: lpass-ahbix-clk {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <0>;
-	};
-
 	sound: sound@7702000 {
 		compatible = "qcom,msm8916-qdsp6-sndcard";
 		model = "msm8909";
@@ -113,14 +112,17 @@
 	lpass_codec: audio-codec@771c000 {
 		compatible = "qcom,msm8916-wcd-digital-codec";
 		reg = <0x0771c000 0x400>;
-		clocks = <&lpass_ahbix_clk>,
+		clocks = <&q6afecc LPASS_CLK_ID_PRI_MI2S_IBIT
+				   LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
 			 <&q6afecc LPASS_CLK_ID_INTERNAL_DIGITAL_CODEC_CORE
 				   LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
 		clock-names = "ahbix-clk", "mclk";
-		/* the DSP clock only takes its rate when it is switched on */
-		assigned-clocks = <&q6afecc LPASS_CLK_ID_INTERNAL_DIGITAL_CODEC_CORE
+		/* DSP clocks only take their rate when they are switched on */
+		assigned-clocks = <&q6afecc LPASS_CLK_ID_PRI_MI2S_IBIT
+					    LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+				  <&q6afecc LPASS_CLK_ID_INTERNAL_DIGITAL_CODEC_CORE
 					    LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
-		assigned-clock-rates = <9600000>;
+		assigned-clock-rates = <1536000>, <9600000>;
 		#sound-dai-cells = <1>;
 	};
 };
