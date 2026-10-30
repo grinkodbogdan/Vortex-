@@ -67,3 +67,22 @@ apps through `navigator.mozApps.mgmt.import`, which Vortex doesn't have.
 * Notifications and alarms delivered by the shell
 * Optional spatial navigation (`navigator.spatialNavigationEnabled`) through
   WebKit's `enable-spatial-navigation` setting
+
+## Phone features for apps
+
+`vortex-webview` gives the shim a native bridge
+(`window.webkit.messageHandlers.vortex`), so these KaiOS/Web APIs reach the
+hardware:
+
+| API | Backed by |
+|---|---|
+| `<audio>`, `<video>`, Web Audio | GStreamer → ALSA (`/etc/asound.conf`: phone, or Bluetooth headphones) |
+| keys (SoftLeft/Right, Call, Backspace, `*`, `#`, digits, arrows, Enter) | the keypad hwdb remap + the shim's KaiOS key names |
+| `navigator.vibrate()` | the PM8909 vibration motor (force feedback) |
+| `navigator.volumeManager` | `vortex-audio volume` (0-15), with a volume bar |
+| `navigator.getBattery()`, `navigator.battery` | `/sys/class/power_supply` |
+| `navigator.mozPower` (brightness, power off, reboot) | the backlight, `doas poweroff/reboot` |
+| `navigator.getDeviceStorage()` (sdcard, music, pictures, videos) | `/var/lib/vortex/storage` (`adb push` files there) |
+| `Notification` | allowed; shown as a short vibration |
+
+Telephony, SMS, contacts and alarms are still stubs.

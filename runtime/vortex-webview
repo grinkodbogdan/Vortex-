@@ -8,8 +8,14 @@
 #
 # Run it inside a Wayland kiosk compositor (see vortex-webview-cage).
 # Set VORTEX_PROXY=http://host:port to route web traffic through a proxy.
+import base64
+import fcntl
+import glob
+import json
 import mimetypes
 import os
+import struct
+import subprocess
 import sys
 
 import gi
@@ -43,6 +49,12 @@ if proxy:
         WebKit2.NetworkProxySettings.new(proxy, ["localhost", "127.0.0.1"]),
     )
 context = WebKit2.WebContext.new_with_website_data_manager(manager)
+# WebKit's sandbox exposes /etc and /dev/snd (ALSA) but not the system bus,
+# which Bluetooth headphones (bluez-alsa) need.
+try:
+    context.add_path_to_sandbox("/run/dbus", False)
+except (AttributeError, GLib.Error):
+    pass
 
 # --dir-handler=SCHEME:DIR, like Cog's: serve DIR as SCHEME://anything/
 for spec in opts.get("dir-handler", []):
@@ -69,6 +81,211 @@ for spec in opts.get("dir-handler", []):
     security.register_uri_scheme_as_secure(scheme)
     security.register_uri_scheme_as_cors_enabled(scheme)
 
+# ---- device storage: KaiOS getDeviceStorage() on a plain directory --------
+
+STORAGE = os.environ.get("VORTEX_STORAGE", "/var/lib/vortex/storage")
+STORAGE_TYPES = {
+    "music": ("audio/",),
+    "pictures": ("image/",),
+    "videos": ("video/",),
+}
+
+
+def storage_path(name):
+    """Absolute path for a storage-relative name, or None if it escapes."""
+    root = os.path.realpath(STORAGE)
+    path = os.path.realpath(os.path.join(root, name.lstrip("/")))
+    return path if path == root or path.startswith(root + os.sep) else None
+
+
+def serve_storage(request):
+    path = storage_path(GLib.uri_unescape_string(request.get_path(), None) or "")
+    if not path or not os.path.isfile(path):
+        request.finish_error(GLib.Error.new_literal(Gio.io_error_quark(), "not found", Gio.IOErrorEnum.NOT_FOUND))
+        return
+    stream = Gio.File.new_for_path(path).read(None)
+    request.finish(stream, os.path.getsize(path), mimetypes.guess_type(path)[0] or "application/octet-stream")
+
+
+context.register_uri_scheme("vortex-storage", serve_storage)
+context.get_security_manager().register_uri_scheme_as_cors_enabled("vortex-storage")
+
+
+def storage_list(kind):
+    prefixes = STORAGE_TYPES.get(kind)
+    root = os.path.realpath(STORAGE)
+    out = []
+    for dirpath, _dirs, files in os.walk(root):
+        for f in files:
+            full = os.path.join(dirpath, f)
+            mime = mimetypes.guess_type(full)[0] or "application/octet-stream"
+            if prefixes and not mime.startswith(prefixes):
+                continue
+            st = os.stat(full)
+            out.append({"name": os.path.relpath(full, root), "size": st.st_size,
+                        "type": mime, "mtime": int(st.st_mtime * 1000)})
+    return out
+
+
+# ---- vibration: force feedback on the PMIC's vibrator ---------------------
+
+FF_RUMBLE, EV_FF = 0x50, 0x15
+# struct ff_effect: 14 bytes of header, the union aligned to a pointer
+_PTR = struct.calcsize("P")
+_FF_HDR = 16  # 14 bytes of fields, then the union at pointer alignment
+_FF_SIZE = _FF_HDR + (28 if _PTR == 4 else 32)
+EVIOCSFF = (1 << 30) | (_FF_SIZE << 16) | (ord("E") << 8) | 0x80  # _IOW('E', 0x80, ff_effect)
+EVIOCRMFF = (1 << 30) | (4 << 16) | (ord("E") << 8) | 0x81
+
+
+class Vibrator:
+    def __init__(self):
+        self.fd = None
+        for dev in sorted(glob.glob("/sys/class/input/event*/device/name")):
+            try:
+                with open(dev) as f:
+                    name = f.read().strip()
+            except OSError:
+                continue
+            if "vib" in name:
+                try:
+                    self.fd = os.open("/dev/input/" + dev.split("/")[4], os.O_RDWR)
+                except OSError:
+                    pass
+                break
+        self.timer = None
+
+    def _pulse(self, ms):
+        effect = bytearray(_FF_SIZE)
+        struct.pack_into("=HhHHHHH", effect, 0, FF_RUMBLE, -1, 0, 0, 0, int(ms), 0)
+        struct.pack_into("=HH", effect, _FF_HDR, 0xFFFF, 0xFFFF)
+        try:
+            fcntl.ioctl(self.fd, EVIOCSFF, effect)
+            eid = struct.unpack_from("=h", effect, 2)[0]
+            now = struct.pack("@LLHHi", 0, 0, EV_FF, eid, 1)  # struct input_event
+            os.write(self.fd, now)
+            GLib.timeout_add(int(ms) + 50, self._erase, eid)
+        except OSError:
+            pass
+
+    def _erase(self, eid):
+        try:
+            fcntl.ioctl(self.fd, EVIOCRMFF, eid)
+        except OSError:
+            pass
+        return False
+
+    def vibrate(self, pattern):
+        """KaiOS/Web pattern: [on, off, on, ...] in ms; [] or [0] stops."""
+        if self.fd is None:
+            return False
+        if self.timer:
+            GLib.source_remove(self.timer)
+            self.timer = None
+        steps = [max(0, min(int(x), 10000)) for x in pattern][:32]
+
+        def step(i=0):
+            self.timer = None
+            if i >= len(steps):
+                return False
+            if i % 2 == 0 and steps[i]:
+                self._pulse(steps[i])
+            self.timer = GLib.timeout_add(max(steps[i], 1), step, i + 1)
+            return False
+
+        step()
+        return True
+
+
+vibrator = Vibrator()
+
+
+# ---- the rest of the hardware ---------------------------------------------
+
+def battery():
+    for d in glob.glob("/sys/class/power_supply/*"):
+        try:
+            with open(d + "/type") as f:
+                if f.read().strip() != "Battery":
+                    continue
+            with open(d + "/capacity") as f:
+                level = int(f.read()) / 100.0
+            with open(d + "/status") as f:
+                status = f.read().strip()
+            return {"level": level, "charging": status in ("Charging", "Full")}
+        except (OSError, ValueError):
+            continue
+    return {"level": 1.0, "charging": True}
+
+
+def backlight():
+    for d in glob.glob("/sys/class/backlight/*"):
+        return d
+    return None
+
+
+def brightness(value=None):
+    d = backlight()
+    if not d:
+        return 1.0
+    with open(d + "/max_brightness") as f:
+        top = int(f.read())
+    if value is not None:
+        v = max(1, int(round(float(value) * top)))
+        try:
+            with open(d + "/brightness", "w") as f:
+                f.write(str(v))
+        except OSError:
+            pass
+    with open(d + "/brightness") as f:
+        return int(f.read()) / float(top)
+
+
+def run(*argv):
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def bridge_call(cmd, args):
+    if cmd == "vibrate":
+        return vibrator.vibrate(args.get("pattern", []))
+    if cmd == "volume":
+        op = args.get("op", "get")
+        return int(run("vortex-audio", "volume", op if op in ("up", "down") else "get") or 0)
+    if cmd == "battery":
+        return battery()
+    if cmd == "brightness":
+        return brightness(args.get("value"))
+    if cmd == "power":
+        if args.get("op") in ("poweroff", "reboot"):
+            run("doas", args["op"])
+        return True
+    if cmd == "storage":
+        op = args.get("op")
+        if op == "list":
+            return storage_list(args.get("storage", "sdcard"))
+        if op == "space":
+            st = os.statvfs(STORAGE)
+            used = sum(f["size"] for f in storage_list("sdcard"))
+            return {"free": st.f_bavail * st.f_frsize, "used": used}
+        path = storage_path(args.get("name", ""))
+        if not path or path == os.path.realpath(STORAGE):
+            raise ValueError("SecurityError")
+        if op == "put":
+            if os.path.exists(path) and not args.get("overwrite"):
+                raise ValueError("NoModificationAllowedError")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(base64.b64decode(args.get("data", "")))
+            return args["name"]
+        if op == "delete":
+            os.remove(path)
+            return args["name"]
+    raise ValueError("NotSupportedError")
+
+
 settings = WebKit2.Settings()
 settings.set_enable_developer_extras(False)
 settings.set_media_playback_requires_user_gesture(False)
@@ -84,6 +301,55 @@ content.add_style_sheet(WebKit2.UserStyleSheet(
     WebKit2.UserContentInjectedFrames.ALL_FRAMES,
     WebKit2.UserStyleLevel.USER, None, None))
 view = WebKit2.WebView(web_context=context, settings=settings, user_content_manager=content)
+
+
+def run_js(script):
+    try:
+        view.evaluate_javascript(script, -1, None, None, None, None)
+    except (AttributeError, TypeError):
+        view.run_javascript(script, None, None)
+
+
+def bridge_message(_manager, message):
+    # The shim posts {"id": n, "cmd": "...", "args": {...}} and gets
+    # window.__vortexBridgeReply(id, error, result) back.
+    value = message.get_js_value() if hasattr(message, "get_js_value") else message
+    try:
+        msg = json.loads(value.to_string())
+        result, error = bridge_call(msg.get("cmd"), msg.get("args") or {}), None
+    except Exception as e:  # report every failure to the page
+        msg = msg if "msg" in locals() and isinstance(msg, dict) else {}
+        result, error = None, (str(e) if isinstance(e, ValueError) else "UnknownError")
+    if msg.get("id") is not None:
+        run_js("window.__vortexBridgeReply && window.__vortexBridgeReply(%s, %s, %s)"
+               % (json.dumps(msg["id"]), json.dumps(error), json.dumps(result)))
+
+
+content.connect("script-message-received::vortex", bridge_message)
+try:
+    content.register_script_message_handler("vortex")
+except TypeError:  # newer API: (name, world_name)
+    content.register_script_message_handler("vortex", None)
+
+
+def permission_request(_view, request):
+    # Notifications are fine; nothing else (camera, location) exists here.
+    if isinstance(request, WebKit2.NotificationPermissionRequest):
+        request.allow()
+    else:
+        request.deny()
+    return True
+
+
+def show_notification(_view, notification):
+    # No notification centre over a full-screen app: buzz instead.
+    vibrator.vibrate([200])
+    print("vortex-webview: notification: %s" % notification.get_title(), file=sys.stderr, flush=True)
+    return True
+
+
+view.connect("permission-request", permission_request)
+view.connect("show-notification", show_notification)
 window = Gtk.Window()
 window.set_decorated(False)  # no title bar: the app owns the whole screen
 window.add(view)

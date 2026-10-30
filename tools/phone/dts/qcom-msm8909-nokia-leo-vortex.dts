@@ -228,6 +228,11 @@
 	};
 };
 
+/* the vibration motor, for navigator.vibrate() */
+&pm8909_vib {
+	status = "okay";
+};
+
 &pm8909_1 {
 	pm8909_codec: audio-codec@f000 {
 		compatible = "qcom,pm8916-wcd-analog-codec";

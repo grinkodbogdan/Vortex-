@@ -8,6 +8,9 @@
 #                           connected; the "audio" service runs this
 #   vortex-audio mixer      set the mixer once
 #   vortex-audio output     print where sound goes: phone or bt
+#   vortex-audio volume [up|down|get|N]
+#                           media volume, 0-15 (3 dB steps), remembered in
+#                           /var/lib/vortex/volume; prints the new level
 #
 # The modem (and with it the sound card) can come up minutes after boot,
 # when udevd is no longer running to load modules, so load them here.
@@ -18,6 +21,29 @@ MODULES="apr q6core q6afe q6afe-dai q6afe-clocks q6asm q6asm-dai q6adm q6routing
 	snd-soc-msm8916-digital snd-soc-msm8916-analog snd-soc-apq8016-sbc"
 
 log() { echo "vortex-audio: $*"; }
+
+VOLUME_FILE=/var/lib/vortex/volume
+
+volume() { # [up|down|get|N]
+	v=$(cat "$VOLUME_FILE" 2>/dev/null) || v=12
+	case $v in '' | *[!0-9]*) v=12 ;; esac
+	case ${1:-get} in
+	up) v=$((v + 1)) ;;
+	down) v=$((v - 1)) ;;
+	get) ;;
+	*[!0-9]* | '') echo "usage: vortex-audio volume [up|down|get|N]" >&2; return 2 ;;
+	*) v=$1 ;;
+	esac
+	[ "$v" -gt 15 ] && v=15
+	[ "$v" -lt 0 ] && v=0
+	[ "${1:-get}" = get ] || echo "$v" > "$VOLUME_FILE" 2>/dev/null
+	# 15 = 0 dB, each step 3 dB down, 0 = silent
+	if [ "$v" -eq 0 ]; then db=-84; else db=$(((v - 15) * 3)); fi
+	for r in RX1 RX2 RX3; do
+		amixer -q -c "$CARD" sset "$r Digital" "${db}dB" 2>/dev/null
+	done
+	echo "$v"
+}
 
 # A connected Bluetooth device that receives audio (A2DP sink)?
 bt_audio_connected() {
@@ -57,9 +83,7 @@ mixer() {
 	c 'SPK DAC Switch' 1
 	c 'HPHL' 1
 	c 'HPHR' 1
-	for v in RX1 RX2 RX3; do
-		amixer -q -c "$CARD" sset "$v Digital" 0dB 2>/dev/null || log "mixer: cannot set $v Digital"
-	done
+	log "volume $(volume get)"
 	# main microphone
 	c 'DEC1 MUX' ADC1
 	c 'CIC1 MUX' AMIC
@@ -90,6 +114,9 @@ setup)
 		sleep 3
 	done
 	;;
+volume)
+	volume "${2:-get}"
+	;;
 output)
 	if grep -q vortex_bt /etc/asound.conf 2>/dev/null; then echo bt; else echo phone; fi
 	;;
@@ -97,7 +124,7 @@ mixer)
 	mixer
 	;;
 *)
-	echo "usage: vortex-audio setup|mixer|output" >&2
+	echo "usage: vortex-audio setup|mixer|output|volume [up|down|get|N]" >&2
 	exit 2
 	;;
 esac

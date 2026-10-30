@@ -164,7 +164,9 @@ grep -q '^vortex:' "$ROOT/etc/shadow" 2>/dev/null || echo 'vortex:!:19000::::::'
 for g in video input audio; do
 	sed -i "s/^\($g:[^:]*:[0-9]*:\)\(.*\)$/\1\2,vortex/; s/^\($g:[^:]*:[0-9]*:\),vortex$/\1vortex/" "$ROOT/etc/group"
 done
-mkdir -p "$ROOT/var/lib/vortex/apps" "$ROOT/var/lib/vortex/data" "$ROOT/var/cache/vortex/web"
+mkdir -p "$ROOT/var/lib/vortex/apps" "$ROOT/var/lib/vortex/data" "$ROOT/var/cache/vortex/web" \
+	"$ROOT/var/lib/vortex/storage/music" "$ROOT/var/lib/vortex/storage/pictures" \
+	"$ROOT/var/lib/vortex/storage/videos"
 chown -R 990:990 "$ROOT/var/lib/vortex" "$ROOT/var/cache/vortex"
 touch "$ROOT/etc/vortex/.firstboot"
 # the clock never starts earlier than this (core-services/04-vortex-clock.sh)

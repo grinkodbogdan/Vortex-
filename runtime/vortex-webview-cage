@@ -13,6 +13,8 @@ export WLR_LIBINPUT_NO_DEVICES=1 GDK_BACKEND=wayland
 # device, and less memory than llvmpipe.  No accessibility bus either.
 export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 \
 	WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 NO_AT_BRIDGE=1 GDK_GL=disable
+# App sound goes to ALSA (/etc/asound.conf); there is no PulseAudio.
+export GST_PLUGIN_FEATURE_RANK=${GST_PLUGIN_FEATURE_RANK:-pulsesink:NONE,alsasink:MAX}
 # A crash in the Python/GTK process prints where it happened.
 export PYTHONFAULTHANDLER=1
 # Use the DRM device that drives a display.  On the Nokia 6300 4G the panel
