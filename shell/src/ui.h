@@ -6,6 +6,7 @@
 #include "store.h"
 #include "sysinfo.h"
 #include "t9.h"
+#include "tube.h"
 
 #include <sys/types.h>
 
@@ -14,6 +15,8 @@ enum screen {
     SCR_STORE, SCR_STORE_LIST, SCR_STORE_DETAIL,
     SCR_SETTINGS, SCR_WIFI, SCR_BT, SCR_SYSINFO, SCR_DIALER, SCR_CALC,
     SCR_CALL, SCR_MESSAGES, SCR_THREAD,
+    SCR_TUBE, SCR_TUBE_SEARCH, SCR_TUBE_LIST, SCR_TUBE_VIDEO, SCR_TUBE_TEXT, SCR_TUBE_PLAYER,
+    SCR_TUBE_SETTINGS, SCR_TUBE_SERVERS,
     SCR_INPUT, SCR_MENU,
 };
 
@@ -21,7 +24,8 @@ enum job_kind { JOB_NONE, JOB_INSTALL, JOB_REMOVE, JOB_WIFI_SCAN, JOB_WIFI_CONNE
                 JOB_WIFI_TOGGLE, JOB_BT_TOGGLE, JOB_BT_SCAN, JOB_BT_CONNECT, JOB_CALL,
                 JOB_SMS };
 enum menu_kind { MENU_POWER, MENU_APP_OPTIONS, MENU_CONFIRM_REMOVE };
-enum input_kind { INPUT_SEARCH, INPUT_WIFI_PSK, INPUT_SMS, INPUT_SMS_NUMBER };
+enum input_kind { INPUT_SEARCH, INPUT_WIFI_PSK, INPUT_SMS, INPUT_SMS_NUMBER, INPUT_TUBE_SEARCH,
+                  INPUT_TUBE_SERVER };
 
 #define WIFI_MAX 24
 #define BT_MAX 24
@@ -83,6 +87,13 @@ struct shell {
     struct { char number[24]; int last, unread; } conv[CONV_MAX];
     char thread_number[24];
     int thread_scroll;
+
+    /* Tube (Invidious client) */
+    struct tube tube;
+    int tube_sel, tube_top;        /* Tube home, recent searches, settings */
+    int tube_srv_sel, tube_srv_top;
+    int tube_text_scroll, tube_text_lines;
+    char tube_err[96];             /* why the last list did not load */
 
     /* calculator */
     char calc_cur[24];             /* number being typed / shown */

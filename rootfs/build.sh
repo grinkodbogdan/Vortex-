@@ -140,7 +140,7 @@ make -s -C "$TOP/adbd" CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
 install -Dm755 "$TOP/adbd/vortex-adbd" "$ROOT/usr/libexec/vortex/vortex-adbd"
 make -s -C "$TOP/adbd" clean
 
-for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync vortex-audio vortex-radio vortex-modem vortex-voice vortex-vibrate; do
+for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync vortex-audio vortex-radio vortex-modem vortex-voice vortex-vibrate vortex-tube; do
 	install -Dm755 "$TOP/runtime/$f" "$ROOT/usr/libexec/vortex/$f"
 done
 install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
@@ -170,7 +170,8 @@ for g in video input audio; do
 done
 mkdir -p "$ROOT/var/lib/vortex/apps" "$ROOT/var/lib/vortex/data" "$ROOT/var/cache/vortex/web" \
 	"$ROOT/var/lib/vortex/storage/music" "$ROOT/var/lib/vortex/storage/pictures" \
-	"$ROOT/var/lib/vortex/storage/videos" "$ROOT/var/lib/vortex/sms"
+	"$ROOT/var/lib/vortex/storage/videos" "$ROOT/var/lib/vortex/sms" "$ROOT/var/lib/vortex/tube" \
+	"$ROOT/var/cache/vortex/tube"
 chown -R 990:990 "$ROOT/var/lib/vortex" "$ROOT/var/cache/vortex"
 touch "$ROOT/etc/vortex/.firstboot"
 # the clock never starts earlier than this (core-services/04-vortex-clock.sh)

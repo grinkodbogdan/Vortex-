@@ -60,8 +60,8 @@ CONF=$OUT/vortex3.conf run store-retry "soft_left wait:400 shot:$OUT/store-error
 # regression: the store is unloaded while an app runs; returning to the
 # store page afterwards must not touch freed records
 CONF=$OUT/vortex2.conf run store-open "soft_left down ok ok soft_left wait:1500 wait:300 shot:$OUT/store-after-app.ppm"
-# the first installed app comes after the 7 built-in ones
-run options    "ok right right right right right right right soft_left shot:$OUT/options.ppm down ok shot:$OUT/confirm.ppm"
+# the first installed app comes after the 8 built-in ones
+run options    "ok right right right right right right right right soft_left shot:$OUT/options.ppm down ok shot:$OUT/confirm.ppm"
 
 # Messages: conversations (unread first message), then a thread
 mkdir -p "$OUT/sms" "$OUT/run-none"
@@ -80,6 +80,26 @@ if [ "$(cat "$OUT/leds/white:torch/brightness" "$OUT/leds/white:torch-en/brightn
 else
 	echo "FAIL torch-leds"; fail=1
 fi
+
+# Tube (Invidious client) with a stand-in helper; Tube is the 8th app
+mkdir -p "$OUT/tube"
+sed -e "s|^call_cmd = .*|&\ntube_cmd = $(pwd)/tests/fake-tube.sh\ntube_dir = $(pwd)/$OUT/tube|" "$OUT/vortex.conf" > "$OUT/vortex-tube.conf"
+VORTEX_TUBE_CACHE="$(pwd)/$OUT/cache/tube"
+export VORTEX_TUBE_CACHE
+TUBE="ok right right right right right right right ok"
+CONF=$OUT/vortex-tube.conf run tube-home "$TUBE shot:$OUT/tube-home.ppm"
+# search "lo" (5 5 5 = l, 6 6 6 = o), results with thumbnails, a video page
+CONF=$OUT/vortex-tube.conf run tube-search "$TUBE ok 5 5 5 wait:1000 6 6 6 wait:1000 shot:$OUT/tube-input.ppm ok wait:800 wait:600 shot:$OUT/tube-list.ppm down ok wait:400 wait:300 shot:$OUT/tube-video.ppm down down down down down down ok shot:$OUT/tube-desc.ppm"
+# the end of the results loads page two
+CONF=$OUT/vortex-tube.conf run tube-more "$TUBE ok 5 wait:1000 ok wait:800 up wait:800 wait:300 down shot:$OUT/tube-more.ppm"
+# recent searches remembered; listen (audio) shows the player screen
+CONF=$OUT/vortex-tube.conf run tube-listen "$TUBE ok shot:$OUT/tube-recent.ppm down ok wait:800 soft_left wait:300 shot:$OUT/tube-player.ppm back shot:$OUT/tube-home-playing.ppm"
+# watching hands the screen over; back stops and the list comes back
+CONF=$OUT/vortex-tube.conf run tube-watch "$TUBE down down ok wait:600 call wait:300 back wait:300 shot:$OUT/tube-after-watch.ppm"
+CONF=$OUT/vortex-tube.conf run tube-history "$TUBE down down down down ok wait:300 shot:$OUT/tube-history.ppm"
+CONF=$OUT/vortex-tube.conf run tube-feed "$TUBE down ok wait:600 shot:$OUT/tube-feed.ppm"
+CONF=$OUT/vortex-tube.conf run tube-servers "$TUBE up ok shot:$OUT/tube-settings.ppm down ok wait:500 shot:$OUT/tube-servers.ppm"
+unset VORTEX_TUBE_CACHE
 
 # boot logo, mid-animation, with the first-boot message
 echo "Setting up Vortex (first boot only). This takes a few minutes..." > "$OUT/splash.msg"

@@ -18,7 +18,7 @@ PREFIX   ?= /usr
 DESTDIR  ?=
 
 COMMON = src/main.c src/ui.c src/gfx.c src/apps.c src/store.c src/json.c \
-         src/proc.c src/sysinfo.c src/t9.c src/util.c
+         src/proc.c src/sysinfo.c src/t9.c src/tube.c src/util.c
 
 all: vortex-shell vortex-splash
 

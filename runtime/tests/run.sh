@@ -29,6 +29,8 @@ check "no temp dirs left" '[ -z "$(find "$T/apps" -maxdepth 1 -name ".install-*"
 runtime/vortex-kai-remove omni >/dev/null
 check "remove" '[ ! -e "$T/apps/omni" ]'
 
+python3 runtime/tests/tube-test.py || fail=1
+
 if node -e "require('playwright')" 2>/dev/null || NODE_PATH=$(npm root -g 2>/dev/null) node -e "require('playwright')" 2>/dev/null; then
 	NODE_PATH=${NODE_PATH:-$(npm root -g)} node runtime/tests/shim-test.js "$T/apps/hello" || fail=1
 else

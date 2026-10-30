@@ -65,5 +65,8 @@ ModemManager
 polkit
 ofono
 
+# Tube (the shell's Invidious client): plays through mpv on the DRM display
+mpv
+
 # Audio
 alsa-utils

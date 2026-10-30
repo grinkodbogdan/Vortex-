@@ -207,7 +207,7 @@ int vx_config_load(struct vx_config *cfg, const char *path)
     static const struct { const char *key; size_t off; } strs[] = {
 #define S(k) { #k, offsetof(struct vx_config, k) }
         S(font), S(apps_dir), S(cache_dir), S(store_url), S(run_cmd),
-        S(install_cmd), S(remove_cmd), S(call_cmd), S(keymap), S(backlight),
+        S(install_cmd), S(remove_cmd), S(call_cmd), S(keymap), S(backlight), S(tube_cmd), S(tube_dir),
 #undef S
     };
     char line[512];
@@ -225,6 +225,8 @@ int vx_config_load(struct vx_config *cfg, const char *path)
     vx_strlcpy(cfg->call_cmd, "/usr/libexec/vortex/vortex-call", sizeof(cfg->call_cmd));
     vx_strlcpy(cfg->keymap, "/etc/vortex/keymap.conf", sizeof(cfg->keymap));
     vx_strlcpy(cfg->backlight, "auto", sizeof(cfg->backlight));
+    vx_strlcpy(cfg->tube_cmd, "/usr/libexec/vortex/vortex-tube", sizeof(cfg->tube_cmd));
+    vx_strlcpy(cfg->tube_dir, "/var/lib/vortex/tube", sizeof(cfg->tube_dir));
     cfg->font_size = 15;
     cfg->screen_timeout = 30;
 

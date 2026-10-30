@@ -47,6 +47,8 @@ struct vx_config {
     char call_cmd[256];
     char keymap[256];
     char backlight[256];   /* sysfs backlight dir, or "auto" */
+    char tube_cmd[256];    /* Invidious helper (runtime/vortex-tube) */
+    char tube_dir[256];    /* its settings, history, saved videos */
     int font_size;
     int screen_timeout;    /* seconds, 0 = never */
 };

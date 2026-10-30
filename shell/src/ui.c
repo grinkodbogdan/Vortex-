@@ -48,6 +48,8 @@ static struct nk_command_buffer *cv;
 /* defined further down */
 static void messages_load(void);
 static void torch_toggle(void);
+static void tube_screen_closed(enum screen s);
+static void tube_stop(void);
 static int move(int *sel, int n, int delta);
 static struct shell *S;
 
@@ -231,8 +233,10 @@ static void status_bar(void)
     }
     if (S->msg_unread)
         fill(nk_rect(24, 6, 9, 7), 1, T.accent); /* unread messages */
-    if (S->job != JOB_NONE || S->store.fetch_pid > 0)
+    if (S->job != JOB_NONE || S->store.fetch_pid > 0 || S->tube.fetch_pid > 0)
         arrow(31, SB_H / 2.f, 'v', T.cyan); /* download activity */
+    if (S->tube.p.pid > 0)
+        arrow(41, SB_H / 2.f, '>', S->tube.p.paused ? T.dim : T.ok); /* Tube is playing */
 
     /* right to left: clock, RAM, battery -- like the desktop panel */
     {
@@ -390,13 +394,16 @@ static void push(enum screen s)
 
 static void pop(void)
 {
-    if (S->depth > 1)
+    if (S->depth > 1) {
+        tube_screen_closed(top());
         S->depth--;
+    }
 }
 
 static void go_home(void)
 {
-    S->depth = 1;
+    while (S->depth > 1)
+        pop();
 }
 
 /* ---- background jobs ------------------------------------------------- */
@@ -483,6 +490,10 @@ static void launch_app(int idx)
     case APP_BUILTIN_TORCH:
         torch_toggle();
         return;
+    case APP_BUILTIN_TUBE:
+        S->tube_sel = S->tube_top = 0;
+        push(SCR_TUBE);
+        return;
     case APP_KAIOS:
         break;
     }
@@ -501,6 +512,7 @@ static void launch_app(int idx)
     plat_release_display();
     store_unload(&S->store);
     apps_drop_icons(&S->apps);
+    tube_drop_thumbs(&S->tube);
 #ifdef __GLIBC__
     malloc_trim(0);
 #endif
@@ -976,6 +988,15 @@ static void icon_torch(void)
         nk_stroke_line(cv, GX(12 + i * 3.2f), GY(6.2f), GX(12 + i * 4.6f), GY(3.2f), GS(1.2f), C(0xfff3c4));
 }
 
+static void icon_tube(void)
+{
+    const uint32_t tile = 0xd63a35;
+    icon_tile(tile);
+    /* a screen with a play button */
+    nk_fill_rect(cv, nk_rect(GX(3.5f), GY(6), GS(17), GS(12)), GS(3.5f), C(0xffffff));
+    nk_fill_triangle(cv, GX(10), GY(9), GX(10), GY(15), GX(15.2f), GY(12), C(tile));
+}
+
 /* Returns 0 if `kind` has no built-in icon. */
 static int builtin_icon(enum app_kind kind, struct nk_rect r)
 {
@@ -990,6 +1011,7 @@ static int builtin_icon(enum app_kind kind, struct nk_rect r)
     case APP_BUILTIN_CALC: icon_calc(); return 1;
     case APP_BUILTIN_MESSAGES: icon_messages(); return 1;
     case APP_BUILTIN_TORCH: icon_torch(); return 1;
+    case APP_BUILTIN_TUBE: icon_tube(); return 1;
     default: return 0;
     }
 }
@@ -1690,7 +1712,9 @@ static void modem_poll(void)
         S->call_since = atol(f[3]);
         S->call_active = 1;
         if (!was || top() != SCR_CALL) {
-            /* a call takes the screen, even from a web app */
+            /* a call takes the screen, even from a web app or a video */
+            if (S->tube.p.pid > 0)
+                tube_stop();
             if (S->app_pid) {
                 S->app_closing = 1;
                 proc_kill_group(S->app_pid, 1500);
@@ -1936,11 +1960,802 @@ static void key_thread(enum vx_key k)
     }
 }
 
+/* ---- Tube: Invidious client ------------------------------------------- */
+
+#define TROW_H 48   /* video rows: thumbnail, title, two small lines */
+
+static int tube_video_playing(void)
+{
+    return S->tube.p.pid > 0 && S->tube.p.video;
+}
+
+static int tube_audio_playing(void)
+{
+    return S->tube.p.pid > 0 && !S->tube.p.video;
+}
+
+static const char *host_of(const char *url)
+{
+    const char *h = strstr(url, "://");
+    return h ? h + 3 : url;
+}
+
+/* Hand the display to mpv and free what the shell can spare for it. */
+static void tube_watch(const struct tube_video *v, int start)
+{
+    char err[300];
+    snprintf(err, sizeof(err), "%s.err", S->tube.p.sock);
+    unlink(err);
+    if (tube_play(&S->tube, v, 1, start, S->now) != 0) {
+        toast("Could not start the player");
+        return;
+    }
+    plat_release_display();
+    store_unload(&S->store);
+    apps_drop_icons(&S->apps);
+    tube_drop_thumbs(&S->tube);
+#ifdef __GLIBC__
+    malloc_trim(0);
+#endif
+}
+
+static void tube_listen(const struct tube_video *v, int start)
+{
+    char err[300];
+    snprintf(err, sizeof(err), "%s.err", S->tube.p.sock);
+    unlink(err);
+    if (tube_play(&S->tube, v, 0, start, S->now) != 0) {
+        toast("Could not start the player");
+        return;
+    }
+    if (top() != SCR_TUBE_PLAYER)
+        push(SCR_TUBE_PLAYER);
+}
+
+/* mpv is gone (stopped, finished or failed). */
+static void tube_player_gone(int code, int stopped)
+{
+    int was_video = S->tube.p.video, quick = S->now - S->tube.p.started < 20000;
+    S->tube.p.video = 0;
+    if (was_video) {
+        plat_resume_display();
+        S->force_redraw = 1;
+        S->last_input = S->now;
+        if (S->store.state != STORE_READY)
+            store_load_cache(&S->store);
+    }
+    if (!stopped && code != 0 && quick) {
+        char path[300], *msg;
+        size_t len;
+        snprintf(path, sizeof(path), "%s.err", S->tube.p.sock);
+        msg = vx_read_file(path, &len, 200);
+        if (msg && msg[0] == '!') {
+            msg[strcspn(msg, "\n")] = '\0';
+            toast(msg + 1);
+        } else {
+            toast(code == 2 ? "This video cannot be played" : "Playback failed");
+        }
+        free(msg);
+    }
+    if (top() == SCR_TUBE_PLAYER)
+        pop();
+}
+
+static void tube_stop(void)
+{
+    if (S->tube.p.pid <= 0)
+        return;
+    tube_player_stop(&S->tube);
+    tube_player_gone(0, 1);
+}
+
+static void tube_open(enum tube_kind kind, const char *arg, const char *title)
+{
+    S->tube_err[0] = '\0';
+    if (tube_open_list(&S->tube, kind, arg, title) != 0) {
+        toast("Go back a little first");
+        return;
+    }
+    push(SCR_TUBE_LIST);
+}
+
+static void tube_search(const char *q)
+{
+    char title[80];
+    if (!q[0])
+        return;
+    tube_add_search(&S->tube, q);
+    snprintf(title, sizeof(title), "\xe2\x80\x9c%s\xe2\x80\x9d", q);
+    tube_open(TK_SEARCH, q, title);
+}
+
+static void tube_new_search(void)
+{
+    t9_reset(&S->t9);
+    S->t9.mode = T9_LOWER;
+    S->input = INPUT_TUBE_SEARCH;
+    push(SCR_INPUT);
+}
+
+static void tube_show_video(const struct tube_video *v)
+{
+    if (tube_open_video(&S->tube, v) != 0) {
+        toast("Go back a little first");
+        return;
+    }
+    push(SCR_TUBE_VIDEO);
+}
+
+/* Small "12:34 · 1.2M views" style line. */
+static void tube_meta(const struct tube_video *v, char *out, size_t n)
+{
+    char dur[16] = "", views[16] = "";
+    if (v->secs > 0)
+        tube_format_time(v->secs, dur, sizeof(dur));
+    if (v->views > 0)
+        tube_format_count(v->views, views, sizeof(views));
+    snprintf(out, n, "%s%s%s%s%s%s", dur, dur[0] && views[0] ? " \xc2\xb7 " : "", views,
+             views[0] ? " views" : "", (dur[0] || views[0]) && v->published[0] ? " \xc2\xb7 " : "",
+             v->published);
+}
+
+static void thumb_box(struct nk_rect r, const char *id, int big)
+{
+    struct vx_image *im = id[0] ? tube_thumb(&S->tube, id, big, (int)r.w, (int)r.h) : NULL;
+    if (im) {
+        struct nk_image img = nk_image_ptr(im);
+        nk_draw_image(cv, r, &img, nk_rgb(255, 255, 255));
+    } else {
+        fill(r, 3, 0x1a2638);
+        arrow(r.x + r.w / 2, r.y + r.h / 2, '>', 0x3d5068);
+    }
+}
+
+/* -- home ----------------------------------------------------------------- */
+
+enum { TH_PLAYING, TH_SEARCH, TH_SUBS, TH_POPULAR, TH_TRENDING, TH_HISTORY, TH_SAVED, TH_SETTINGS };
+
+static int tube_home_items(int *items)
+{
+    int n = 0;
+    if (tube_audio_playing())
+        items[n++] = TH_PLAYING;
+    for (int i = TH_SEARCH; i <= TH_SETTINGS; i++)
+        items[n++] = i;
+    return n;
+}
+
+static void draw_tube(void)
+{
+    struct nk_rect area = content_rect(1);
+    int items[8], n = tube_home_items(items), rows = (int)(area.h / ROW_H);
+    static const char *const names[] = { "Now playing", "Search", "Subscriptions", "Popular",
+                                         "Trending", "History", "Saved", "Settings" };
+    header("Tube", S->tube.instance[0] ? host_of(S->tube.instance) : NULL);
+    if (S->tube_sel >= n)
+        S->tube_sel = n - 1;
+    keep_visible(S->tube_sel, &S->tube_top, rows, n);
+    for (int r = 0; r < rows && S->tube_top + r < n; r++) {
+        int i = S->tube_top + r, it = items[i];
+        char right[48] = "";
+        if (it == TH_PLAYING)
+            vx_strlcpy(right, S->tube.p.v.title, sizeof(right));
+        else if (it == TH_SUBS)
+            snprintf(right, sizeof(right), "%d", tube_count_subs(&S->tube));
+        else if (it == TH_SETTINGS)
+            snprintf(right, sizeof(right), "%sp", S->tube.quality);
+        list_row(nk_rect(area.x, area.y + r * ROW_H, area.w, ROW_H), i == S->tube_sel, names[it],
+                 NULL, right[0] ? right : NULL, it == TH_PLAYING ? T.cyan : T.dim);
+    }
+    scrollbar(area, S->tube_top, rows, n);
+    softkeys("Search", "Open", "Back");
+}
+
+static void key_tube(enum vx_key k)
+{
+    int items[8], n = tube_home_items(items);
+    switch (k) {
+    case VK_UP: move(&S->tube_sel, n, -1); break;
+    case VK_DOWN: move(&S->tube_sel, n, 1); break;
+    case VK_SOFT_LEFT: tube_new_search(); break;
+    case VK_OK:
+        switch (items[S->tube_sel]) {
+        case TH_PLAYING: push(SCR_TUBE_PLAYER); break;
+        case TH_SEARCH:
+            if (S->tube.n_searches) {
+                S->tube_sel = S->tube_top = 0;
+                push(SCR_TUBE_SEARCH);
+            } else {
+                tube_new_search();
+            }
+            break;
+        case TH_SUBS: tube_open(TK_FEED, NULL, "Subscriptions"); break;
+        case TH_POPULAR: tube_open(TK_POPULAR, NULL, "Popular"); break;
+        case TH_TRENDING: tube_open(TK_TRENDING, NULL, "Trending"); break;
+        case TH_HISTORY: tube_open(TK_HISTORY, NULL, "History"); break;
+        case TH_SAVED: tube_open(TK_SAVED, NULL, "Saved"); break;
+        case TH_SETTINGS:
+            S->tube_sel = S->tube_top = 0;
+            push(SCR_TUBE_SETTINGS);
+            break;
+        }
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
+/* -- recent searches ------------------------------------------------------- */
+
+static void draw_tube_search(void)
+{
+    struct nk_rect area = content_rect(1);
+    int n = S->tube.n_searches + 1, rows = (int)(area.h / ROW_H);
+    header("Search", NULL);
+    keep_visible(S->tube_sel, &S->tube_top, rows, n);
+    for (int r = 0; r < rows && S->tube_top + r < n; r++) {
+        int i = S->tube_top + r;
+        list_row(nk_rect(area.x, area.y + r * ROW_H, area.w, ROW_H), i == S->tube_sel,
+                 i == 0 ? "New search\xe2\x80\xa6" : S->tube.searches[i - 1], NULL, NULL, 0);
+    }
+    scrollbar(area, S->tube_top, rows, n);
+    softkeys(S->tube.n_searches ? "Clear" : NULL, "Search", "Back");
+}
+
+static void key_tube_search(enum vx_key k)
+{
+    int n = S->tube.n_searches + 1;
+    switch (k) {
+    case VK_UP: move(&S->tube_sel, n, -1); break;
+    case VK_DOWN: move(&S->tube_sel, n, 1); break;
+    case VK_OK:
+        if (S->tube_sel == 0) {
+            tube_new_search();
+        } else {
+            char q[64];
+            vx_strlcpy(q, S->tube.searches[S->tube_sel - 1], sizeof(q));
+            S->tube_sel = 0;
+            tube_search(q);
+        }
+        break;
+    case VK_SOFT_LEFT:
+        tube_clear_searches(&S->tube);
+        S->tube_sel = 0;
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default:
+        /* typing straight away starts a new search with that letter */
+        if (k >= VK_2 && k <= VK_9) {
+            tube_new_search();
+            t9_key(&S->t9, k, S->now);
+        }
+        break;
+    }
+}
+
+/* -- video lists --------------------------------------------------------------- */
+
+static void draw_tube_list(void)
+{
+    struct nk_rect area = content_rect(1);
+    struct tube_list *l = tube_list(&S->tube);
+    int rows = (int)(area.h / TROW_H), n;
+    char sub[16];
+    if (!l) {
+        header("Tube", NULL);
+        return;
+    }
+    n = l->n + (l->kind == TK_SEARCH && (l->more || S->tube.fetch == TF_MORE));
+    snprintf(sub, sizeof(sub), l->n ? "%d/%d" : "", l->sel + 1, l->n);
+    header(l->title, sub);
+    if (!l->n) {
+        if (l->loading) {
+            spinner(area.w / 2, area.y + 60, 10);
+            label(nk_rect(0, area.y + 80, area.w, 24), "Loading\xe2\x80\xa6", S->fonts.normal, T.dim, AL_CENTER);
+        } else {
+            label(nk_rect(0, area.y + 40, area.w, 24),
+                  l->kind == TK_HISTORY ? "Nothing watched yet" :
+                  l->kind == TK_SAVED ? "Nothing saved yet" : "No videos",
+                  S->fonts.normal, T.dim, AL_CENTER);
+            if (S->tube_err[0]) {
+                struct wrapdraw wd = { 12, area.y + 70, S->fonts.normal->handle.height + 2, 0, 4, T.warn };
+                wrap(S->fonts.normal, S->tube_err, area.w - 24, draw_wrapped_line, &wd);
+            }
+        }
+        softkeys(NULL, NULL, "Back");
+        return;
+    }
+    if (l->sel >= n)
+        l->sel = n - 1;
+    keep_visible(l->sel, &l->top, rows, n);
+    for (int r = 0; r < rows && l->top + r < n; r++) {
+        int i = l->top + r, sel = i == l->sel;
+        struct nk_rect row = nk_rect(area.x, area.y + r * TROW_H, area.w, TROW_H);
+        const struct tube_video *v;
+        char meta[96];
+        if (i == l->n) {  /* the "more" row at the end of search results */
+            if (sel)
+                highlight(nk_rect(row.x + 4, row.y + 1, row.w - 10, row.h - 2));
+            if (S->tube.fetch == TF_MORE)
+                spinner(row.x + 24, row.y + row.h / 2, 6);
+            label(nk_rect(row.x + 40, row.y, row.w - 50, row.h),
+                  S->tube.fetch == TF_MORE ? "Loading more\xe2\x80\xa6" : "More results",
+                  S->fonts.normal, sel ? T.ink : T.dim, AL_LEFT);
+            continue;
+        }
+        v = &l->v[i];
+        if (sel)
+            highlight(nk_rect(row.x + 4, row.y + 1, row.w - 10, row.h - 2));
+        else
+            fill(nk_rect(row.x + 8, row.y + row.h - 1, row.w - 16, 1), 0, T.sep);
+        thumb_box(nk_rect(row.x + 8, row.y + 6, 64, 36), v->id, 0);
+        label(nk_rect(row.x + 78, row.y + 2, row.w - 88, 18), v->title, S->fonts.normal,
+              sel ? T.ink : T.text, AL_LEFT);
+        label(nk_rect(row.x + 78, row.y + 19, row.w - 88, 14), v->author, S->fonts.small,
+              sel ? T.ink_dim : T.cyan, AL_LEFT);
+        tube_meta(v, meta, sizeof(meta));
+        label(nk_rect(row.x + 78, row.y + 32, row.w - 88, 14), meta, S->fonts.small,
+              sel ? T.ink_dim : T.dim, AL_LEFT);
+    }
+    scrollbar(area, l->top, rows, n);
+    softkeys("Listen", "Open", "Back");
+}
+
+static void key_tube_list(enum vx_key k)
+{
+    struct tube_list *l = tube_list(&S->tube);
+    int n;
+    if (!l) {
+        pop();
+        return;
+    }
+    n = l->n + (l->kind == TK_SEARCH && (l->more || S->tube.fetch == TF_MORE));
+    switch (k) {
+    case VK_UP: move(&l->sel, n, -1); break;
+    case VK_DOWN: move(&l->sel, n, 1); break;
+    case VK_LEFT:  /* a page up / down */
+        l->sel = l->sel >= 4 ? l->sel - 4 : 0;
+        break;
+    case VK_RIGHT:
+        l->sel = l->sel + 4 < n ? l->sel + 4 : (n ? n - 1 : 0);
+        break;
+    case VK_OK:
+        if (l->sel == l->n)
+            tube_load_more(&S->tube);
+        else if (l->sel < l->n)
+            tube_show_video(&l->v[l->sel]);
+        break;
+    case VK_SOFT_LEFT:
+        if (l->sel < l->n)
+            tube_listen(&l->v[l->sel], 0);
+        break;
+    case VK_CALL:
+        if (l->sel < l->n)
+            tube_watch(&l->v[l->sel], 0);
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+    /* reaching the end of the results fetches the next page */
+    if (l->kind == TK_SEARCH && l->more && l->sel >= l->n - 1 && S->tube.fetch == TF_NONE)
+        tube_load_more(&S->tube);
+}
+
+/* -- one video -------------------------------------------------------------- */
+
+enum { TV_WATCH, TV_LISTEN, TV_RELATED, TV_CHANNEL, TV_SAVE, TV_SUB, TV_DESC };
+
+static int tube_video_items(const struct tube_detail *d, int *items)
+{
+    int n = 0;
+    items[n++] = TV_WATCH;
+    items[n++] = TV_LISTEN;
+    if (d->n_rel || d->loading)
+        items[n++] = TV_RELATED;
+    if (d->v.author_id[0]) {
+        items[n++] = TV_CHANNEL;
+    }
+    items[n++] = TV_SAVE;
+    if (d->v.author_id[0])
+        items[n++] = TV_SUB;
+    if (d->desc && d->desc[0])
+        items[n++] = TV_DESC;
+    return n;
+}
+
+static void draw_tube_video(void)
+{
+    struct nk_rect area = content_rect(1);
+    struct tube_detail *d = tube_detail(&S->tube);
+    const struct nk_font *f = S->fonts.normal;
+    float y = area.y, lh = f->handle.height + 1, rh = 28, x2 = 136;
+    int items[8], n, rows;
+    char buf[64];
+    struct wrapdraw wd;
+
+    if (!d) {
+        header("Tube", NULL);
+        return;
+    }
+    header(d->v.author[0] ? d->v.author : "Video", NULL);
+    thumb_box(nk_rect(8, y + 6, 120, 68), d->v.id, 0);
+    if (d->v.secs > 0) {
+        tube_format_time(d->v.secs, buf, sizeof(buf));
+        label(nk_rect(x2, y + 6, area.w - x2 - 8, 18), buf, f, T.cyan, AL_LEFT);
+    }
+    if (d->v.views > 0) {
+        tube_format_count(d->v.views, buf, sizeof(buf));
+        strcat(buf, " views");
+        label(nk_rect(x2, y + 25, area.w - x2 - 8, 15), buf, S->fonts.small, T.text, AL_LEFT);
+    }
+    if (d->likes > 0) {
+        tube_format_count(d->likes, buf, sizeof(buf));
+        strcat(buf, " likes");
+        label(nk_rect(x2, y + 40, area.w - x2 - 8, 15), buf, S->fonts.small, T.dim, AL_LEFT);
+    }
+    if (d->v.published[0])
+        label(nk_rect(x2, y + 55, area.w - x2 - 8, 15), d->v.published, S->fonts.small, T.dim, AL_LEFT);
+    if (d->loading)
+        spinner(area.w - 16, y + 64, 5);
+    y += 78;
+    /* the title, up to two lines */
+    wd = (struct wrapdraw){ 8, y, lh, 0, 1, T.text };
+    if (wrap(f, d->v.title, area.w - 16, NULL, NULL) > 1) {
+        wrap(f, d->v.title, area.w - 16, draw_wrapped_line, &wd);
+        y += 2 * lh;
+    } else {
+        wrap(f, d->v.title, area.w - 16, draw_wrapped_line, &wd);
+        y += lh;
+    }
+    fill(nk_rect(8, y + 3, area.w - 16, 1), 0, T.sep);
+    y += 6;
+
+    n = tube_video_items(d, items);
+    rows = (int)((area.y + area.h - y) / rh);
+    if (d->sel >= n)
+        d->sel = n - 1;
+    keep_visible(d->sel, &d->top, rows, n);
+    for (int r = 0; r < rows && d->top + r < n; r++) {
+        int i = d->top + r, it = items[i];
+        const char *name = "";
+        char right[48] = "";
+        switch (it) {
+        case TV_WATCH: name = "Watch"; snprintf(right, sizeof(right), "%sp", S->tube.quality); break;
+        case TV_LISTEN: name = "Listen"; vx_strlcpy(right, "audio only", sizeof(right)); break;
+        case TV_RELATED:
+            name = "Related videos";
+            if (d->n_rel)
+                snprintf(right, sizeof(right), "%d", d->n_rel);
+            break;
+        case TV_CHANNEL: name = "Channel"; break;
+        case TV_SAVE: name = d->saved ? "Saved \xe2\x80\x94 remove" : "Save"; break;
+        case TV_SUB: name = d->subbed ? "Unsubscribe" : "Subscribe"; break;
+        case TV_DESC: name = "Description"; break;
+        }
+        list_row(nk_rect(area.x, y + r * rh, area.w, rh), i == d->sel, name, NULL, right[0] ? right : NULL, T.dim);
+    }
+    scrollbar(nk_rect(area.x, y, area.w, rows * rh), d->top, rows, n);
+    softkeys("Listen", "Select", "Back");
+}
+
+static void key_tube_video(enum vx_key k)
+{
+    struct tube_detail *d = tube_detail(&S->tube);
+    int items[8], n;
+    char title[80];
+    if (!d) {
+        pop();
+        return;
+    }
+    n = tube_video_items(d, items);
+    switch (k) {
+    case VK_UP: move(&d->sel, n, -1); break;
+    case VK_DOWN: move(&d->sel, n, 1); break;
+    case VK_SOFT_LEFT: tube_listen(&d->v, 0); break;
+    case VK_CALL: tube_watch(&d->v, 0); break;
+    case VK_OK:
+        switch (items[d->sel]) {
+        case TV_WATCH: tube_watch(&d->v, 0); break;
+        case TV_LISTEN: tube_listen(&d->v, 0); break;
+        case TV_RELATED:
+            if (d->n_rel)
+                tube_open(TK_RELATED, d->v.id, "Related");
+            else
+                toast("Still loading\xe2\x80\xa6");
+            break;
+        case TV_CHANNEL:
+            vx_strlcpy(title, d->v.author, sizeof(title));
+            tube_open(TK_CHANNEL, d->v.author_id, title);
+            break;
+        case TV_SAVE:
+            d->saved = tube_toggle_saved(&S->tube, &d->v);
+            toast(d->saved ? "Saved" : "Removed from saved");
+            break;
+        case TV_SUB:
+            d->subbed = tube_toggle_sub(&S->tube, d->v.author_id, d->v.author);
+            toast(d->subbed ? "Subscribed" : "Unsubscribed");
+            break;
+        case TV_DESC:
+            S->tube_text_scroll = 0;
+            push(SCR_TUBE_TEXT);
+            break;
+        }
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
+static void draw_tube_text(void)
+{
+    struct nk_rect area = content_rect(1);
+    struct tube_detail *d = tube_detail(&S->tube);
+    const struct nk_font *f = S->fonts.normal;
+    float lh = f->handle.height + 3;
+    int vis = (int)(area.h / lh) - 1;
+    struct wrapdraw wd;
+    header("Description", NULL);
+    if (!d || !d->desc) {
+        softkeys(NULL, NULL, "Back");
+        return;
+    }
+    S->tube_text_lines = wrap(f, d->desc, area.w - 20, NULL, NULL);
+    if (S->tube_text_scroll > S->tube_text_lines - vis)
+        S->tube_text_scroll = S->tube_text_lines - vis;
+    if (S->tube_text_scroll < 0)
+        S->tube_text_scroll = 0;
+    wd = (struct wrapdraw){ 10, area.y + 6, lh, S->tube_text_scroll, S->tube_text_scroll + vis, T.text };
+    nk_push_scissor(cv, area);
+    wrap(f, d->desc, area.w - 20, draw_wrapped_line, &wd);
+    nk_push_scissor(cv, nk_rect(0, 0, S->surf->w, S->surf->h));
+    scrollbar(area, S->tube_text_scroll, vis, S->tube_text_lines);
+    softkeys(NULL, NULL, "Back");
+}
+
+static void key_tube_text(enum vx_key k)
+{
+    switch (k) {
+    case VK_UP: if (S->tube_text_scroll > 0) S->tube_text_scroll--; break;
+    case VK_DOWN: S->tube_text_scroll++; break;
+    case VK_LEFT: S->tube_text_scroll -= 8; break;
+    case VK_RIGHT: S->tube_text_scroll += 8; break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
+/* -- playing ------------------------------------------------------------------ */
+
+/* Keys while mpv shows a video (the shell draws nothing then). */
+static void key_tube_video_playing(enum vx_key k)
+{
+    switch (k) {
+    case VK_OK: tube_player_cmd(&S->tube, "cycle pause"); break;
+    case VK_LEFT: tube_player_cmd(&S->tube, "osd-msg-bar seek -10"); break;
+    case VK_RIGHT: tube_player_cmd(&S->tube, "osd-msg-bar seek 10"); break;
+    case VK_4: tube_player_cmd(&S->tube, "osd-msg-bar seek -60"); break;
+    case VK_6: tube_player_cmd(&S->tube, "osd-msg-bar seek 60"); break;
+    case VK_UP:
+    case VK_VOL_UP: tube_player_cmd(&S->tube, "osd-msg-bar add volume 10"); break;
+    case VK_DOWN:
+    case VK_VOL_DOWN: tube_player_cmd(&S->tube, "osd-msg-bar add volume -10"); break;
+    case VK_5:
+    case VK_SOFT_LEFT: tube_player_cmd(&S->tube, "show-progress"); break;
+    /* hold the phone sideways for a bigger picture */
+    case VK_HASH: tube_player_cmd(&S->tube, "cycle-values video-rotate 90 0"); break;
+    /* picture off: sound only, much less work for the CPU */
+    case VK_STAR: tube_player_cmd(&S->tube, "cycle video"); break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: tube_stop(); break;
+    default: break;
+    }
+}
+
+static void draw_tube_player(void)
+{
+    struct nk_rect area = content_rect(1);
+    struct tube_player *p = &S->tube.p;
+    const struct nk_font *f = S->fonts.normal;
+    float y = area.y + 4, lh = f->handle.height + 1;
+    char a[16], b[16], st[48];
+    struct wrapdraw wd;
+    int pct;
+
+    header("Now playing", NULL);
+    if (p->pid <= 0) {
+        label(nk_rect(0, area.y + 40, area.w, 24), "Nothing playing", f, T.dim, AL_CENTER);
+        softkeys(NULL, NULL, "Back");
+        return;
+    }
+    thumb_box(nk_rect(40, y, 160, 90), p->v.id, 0);
+    y += 96;
+    wd = (struct wrapdraw){ 10, y, lh, 0, 1, T.text };
+    wrap(f, p->v.title, area.w - 20, draw_wrapped_line, &wd);
+    y += 2 * lh;
+    label(nk_rect(10, y, area.w - 20, 16), p->v.author, S->fonts.small, T.cyan, AL_LEFT);
+    y += 22;
+    pct = p->dur > 0 ? (int)(p->pos * 100 / p->dur) : 0;
+    meter(nk_rect(10, y, area.w - 20, 4), pct, T.accent);
+    y += 8;
+    tube_format_time((long)p->pos, a, sizeof(a));
+    tube_format_time((long)p->dur, b, sizeof(b));
+    label(nk_rect(10, y, 80, 16), a, S->fonts.small, T.text, AL_LEFT);
+    label(nk_rect(area.w - 90, y, 80, 16), b, S->fonts.small, T.dim, AL_RIGHT);
+    if (p->fd < 0 || p->buffering)
+        vx_strlcpy(st, "Loading\xe2\x80\xa6", sizeof(st));
+    else if (p->paused)
+        vx_strlcpy(st, "Paused", sizeof(st));
+    else
+        snprintf(st, sizeof(st), "Volume %d", p->volume);
+    label(nk_rect(0, y, area.w, 16), st, S->fonts.small, p->paused ? T.warn : T.dim, AL_CENTER);
+    softkeys("Watch", p->paused ? "Play" : "Pause", "Stop");
+}
+
+static void key_tube_player(enum vx_key k)
+{
+    struct tube_player *p = &S->tube.p;
+    if (p->pid <= 0) {
+        if (k == VK_BACK || k == VK_SOFT_RIGHT)
+            pop();
+        return;
+    }
+    switch (k) {
+    case VK_OK: tube_player_cmd(&S->tube, "cycle pause"); break;
+    case VK_LEFT: tube_player_cmd(&S->tube, "seek -10"); break;
+    case VK_RIGHT: tube_player_cmd(&S->tube, "seek 10"); break;
+    case VK_4: tube_player_cmd(&S->tube, "seek -60"); break;
+    case VK_6: tube_player_cmd(&S->tube, "seek 60"); break;
+    case VK_UP:
+    case VK_VOL_UP: tube_player_cmd(&S->tube, "add volume 10"); break;
+    case VK_DOWN:
+    case VK_VOL_DOWN: tube_player_cmd(&S->tube, "add volume -10"); break;
+    case VK_SOFT_LEFT: {
+        struct tube_video v = p->v;
+        int at = (int)p->pos;
+        pop();
+        tube_watch(&v, at > 3 ? at - 2 : 0);
+        break;
+    }
+    case VK_SOFT_RIGHT: tube_stop(); break;
+    case VK_BACK: pop(); break;   /* keeps playing */
+    default: break;
+    }
+}
+
+/* -- settings -------------------------------------------------------------------- */
+
+static void draw_tube_settings(void)
+{
+    struct nk_rect area = content_rect(1);
+    static const char *const names[] = { "Quality", "Server", "Clear history", "Clear searches" };
+    char q[16];
+    header("Tube settings", NULL);
+    snprintf(q, sizeof(q), "%sp", S->tube.quality);
+    for (int i = 0; i < 4; i++)
+        list_row(nk_rect(area.x, area.y + i * ROW_H, area.w, ROW_H), i == S->tube_sel, names[i], NULL,
+                 i == 0 ? q : i == 1 ? (S->tube.instance[0] ? host_of(S->tube.instance) : "automatic") : NULL,
+                 T.cyan);
+    label(nk_rect(10, area.y + 4 * ROW_H + 10, area.w - 20, 16), "Lower quality plays smoother", S->fonts.small,
+          T.dim, AL_LEFT);
+    softkeys(NULL, "Select", "Back");
+}
+
+static void tube_cycle_quality(int dir)
+{
+    static const char *const q[] = { "144", "240", "360" };
+    int i = 1;
+    for (int j = 0; j < 3; j++)
+        if (!strcmp(S->tube.quality, q[j]))
+            i = j;
+    i = (i + dir + 3) % 3;
+    tube_set(&S->tube, "quality", q[i]);
+}
+
+static void key_tube_settings(enum vx_key k)
+{
+    switch (k) {
+    case VK_UP: move(&S->tube_sel, 4, -1); break;
+    case VK_DOWN: move(&S->tube_sel, 4, 1); break;
+    case VK_LEFT:
+    case VK_RIGHT:
+        if (S->tube_sel == 0)
+            tube_cycle_quality(k == VK_LEFT ? -1 : 1);
+        break;
+    case VK_OK:
+        switch (S->tube_sel) {
+        case 0: tube_cycle_quality(1); break;
+        case 1:
+            S->tube_srv_sel = S->tube_srv_top = 0;
+            tube_fetch_servers(&S->tube);
+            push(SCR_TUBE_SERVERS);
+            break;
+        case 2: tube_clear_history(&S->tube); toast("History cleared"); break;
+        case 3: tube_clear_searches(&S->tube); toast("Searches cleared"); break;
+        }
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
+static void draw_tube_servers(void)
+{
+    struct nk_rect area = content_rect(1);
+    int n = S->tube.n_servers, rows = (int)(area.h / ROW2_H);
+    header("Server", NULL);
+    if (S->tube.servers_loading) {
+        spinner(area.w / 2, area.y + 60, 10);
+        label(nk_rect(0, area.y + 80, area.w, 24), "Testing servers\xe2\x80\xa6", S->fonts.normal, T.dim, AL_CENTER);
+        softkeys("Type", NULL, "Back");
+        return;
+    }
+    if (!n)
+        label(nk_rect(0, area.y + 40, area.w, 24), "No servers found", S->fonts.normal, T.dim, AL_CENTER);
+    keep_visible(S->tube_srv_sel, &S->tube_srv_top, rows, n);
+    for (int r = 0; r < rows && S->tube_srv_top + r < n; r++) {
+        int i = S->tube_srv_top + r;
+        const struct tube_server *s = &S->tube.servers[i];
+        char sub[48];
+        if (s->ok)
+            snprintf(sub, sizeof(sub), "works \xc2\xb7 %d ms", s->ms);
+        else
+            vx_strlcpy(sub, "does not answer the app", sizeof(sub));
+        list_row(nk_rect(area.x, area.y + r * ROW2_H, area.w, ROW2_H), i == S->tube_srv_sel, host_of(s->url),
+                 sub, !strcmp(s->url, S->tube.instance) ? "in use" : NULL, T.ok);
+    }
+    scrollbar(area, S->tube_srv_top, rows, n);
+    softkeys("Type", "Use", "Back");
+}
+
+static void key_tube_servers(enum vx_key k)
+{
+    int n = S->tube.n_servers;
+    switch (k) {
+    case VK_UP: move(&S->tube_srv_sel, n, -1); break;
+    case VK_DOWN: move(&S->tube_srv_sel, n, 1); break;
+    case VK_OK:
+        if (n && !S->tube.servers_loading) {
+            const struct tube_server *s = &S->tube.servers[S->tube_srv_sel];
+            tube_set(&S->tube, "instance", s->url);
+            toast(s->ok ? "Server changed" : "Server changed (it did not answer the test)");
+            pop();
+        }
+        break;
+    case VK_SOFT_LEFT:
+        t9_reset(&S->t9);
+        vx_strlcpy(S->t9.text, "https://", sizeof(S->t9.text));
+        S->t9.len = (int)strlen(S->t9.text);
+        S->input = INPUT_TUBE_SERVER;
+        push(SCR_INPUT);
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
+/* Leaving Tube screens: their list / video page goes with them. */
+static void tube_screen_closed(enum screen s)
+{
+    if (s == SCR_TUBE_LIST)
+        tube_pop_list(&S->tube);
+    else if (s == SCR_TUBE_VIDEO)
+        tube_pop_video(&S->tube);
+}
+
 static void draw_input(void)
 {
     struct nk_rect area = content_rect(1);
     float fy = area.y + 30;
     const char *title = S->input == INPUT_SEARCH ? "Search apps" :
+                        S->input == INPUT_TUBE_SEARCH ? "Search videos" :
+                        S->input == INPUT_TUBE_SERVER ? "Server address" :
                         S->input == INPUT_SMS ? "Message" :
                         S->input == INPUT_SMS_NUMBER ? "To (number)" : "Wi-Fi password";
     char shown[80];
@@ -2013,6 +2828,14 @@ static void draw_screen(enum screen scr)
     case SCR_SYSINFO: draw_sysinfo(); break;
     case SCR_DIALER: draw_dialer(); break;
     case SCR_CALC: draw_calc(); break;
+    case SCR_TUBE: draw_tube(); break;
+    case SCR_TUBE_SEARCH: draw_tube_search(); break;
+    case SCR_TUBE_LIST: draw_tube_list(); break;
+    case SCR_TUBE_VIDEO: draw_tube_video(); break;
+    case SCR_TUBE_TEXT: draw_tube_text(); break;
+    case SCR_TUBE_PLAYER: draw_tube_player(); break;
+    case SCR_TUBE_SETTINGS: draw_tube_settings(); break;
+    case SCR_TUBE_SERVERS: draw_tube_servers(); break;
     case SCR_INPUT: draw_input(); break;
     case SCR_MENU: draw_menu(); break;
     }
@@ -2282,6 +3105,23 @@ static void key_input(enum vx_key k)
                 open_thread(number);
                 compose();
             }
+        } else if (S->input == INPUT_TUBE_SEARCH) {
+            char q[64];
+            vx_strlcpy(q, S->t9.text, sizeof(q));
+            tube_search(q);
+        } else if (S->input == INPUT_TUBE_SERVER) {
+            char url[96];
+            size_t n = vx_strlcpy(url, S->t9.text, sizeof(url));
+            while (n > 0 && url[n - 1] == '/')
+                url[--n] = '\0';
+            if (n > 8 && strstr(url, "://")) {
+                tube_set(&S->tube, "instance", url);
+                toast("Server changed");
+                if (top() == SCR_TUBE_SERVERS)
+                    pop();
+            } else {
+                toast("Type the whole address");
+            }
         } else {
             wifi_connect(S->wifi_target, S->t9.text);
         }
@@ -2347,7 +3187,7 @@ int shell_key(struct shell *sh, const struct vx_event *ev)
         if (ev->pressed && !sh->end_long_fired &&
             (sh->now - sh->end_down_at >= 900 || sh->end_repeats >= 25)) {
             sh->end_long_fired = 1;
-            if (sh->app_pid)
+            if (sh->app_pid || tube_video_playing())
                 return 0;
             if (top() != SCR_MENU)
                 open_menu(MENU_POWER);
@@ -2357,6 +3197,10 @@ int shell_key(struct shell *sh, const struct vx_event *ev)
             sh->end_down_at = -1;
             if (sh->end_long_fired)
                 return 0;
+            if (tube_video_playing()) {
+                tube_stop();
+                return 1;
+            }
             if (sh->app_pid) {
                 sh->app_closing = 1;
                 proc_kill_group(sh->app_pid, 1500);
@@ -2369,6 +3213,11 @@ int shell_key(struct shell *sh, const struct vx_event *ev)
         return 0;
     }
 
+    if (tube_video_playing()) {
+        if (ev->pressed)
+            key_tube_video_playing(ev->key);
+        return 0;
+    }
     if (sh->app_pid || !ev->pressed)
         return 0;
 
@@ -2390,6 +3239,14 @@ int shell_key(struct shell *sh, const struct vx_event *ev)
         break;
     case SCR_DIALER: key_dialer(ev->key); break;
     case SCR_CALC: key_calc(ev->key); break;
+    case SCR_TUBE: key_tube(ev->key); break;
+    case SCR_TUBE_SEARCH: key_tube_search(ev->key); break;
+    case SCR_TUBE_LIST: key_tube_list(ev->key); break;
+    case SCR_TUBE_VIDEO: key_tube_video(ev->key); break;
+    case SCR_TUBE_TEXT: key_tube_text(ev->key); break;
+    case SCR_TUBE_PLAYER: key_tube_player(ev->key); break;
+    case SCR_TUBE_SETTINGS: key_tube_settings(ev->key); break;
+    case SCR_TUBE_SERVERS: key_tube_servers(ev->key); break;
     case SCR_INPUT: key_input(ev->key); break;
     case SCR_MENU: key_menu(ev->key); break;
     }
@@ -2485,6 +3342,26 @@ int shell_tick(struct shell *sh)
             dirty = 1;
         }
     }
+    /* Tube: mpv, then the helper's downloads */
+    if (sh->tube.p.pid > 0) {
+        int r = tube_player_poll(&sh->tube, &code);
+        if (r == 2) {
+            tube_player_gone(code, 0);
+            dirty = 1;
+        } else if (r == 1 && (top() == SCR_TUBE_PLAYER || top() == SCR_TUBE)) {
+            dirty = 1;
+        }
+    }
+    if (tube_poll(&sh->tube) || sh->tube.fetch_pid > 0)
+        dirty = 1;
+    if (sh->tube.error[0]) {
+        vx_strlcpy(sh->tube_err, sh->tube.error, sizeof(sh->tube_err));
+        toast(sh->tube.error);
+        sh->tube.error[0] = '\0';
+        dirty = 1;
+    }
+    if (shell_app_running(sh) && !sh->app_pid)
+        return 0;   /* a video is on: nothing else to draw */
     if (sh->app_pid) {
         if (proc_poll(sh->app_pid, &code) != 0) {
             sh->app_pid = 0;
@@ -2549,6 +3426,7 @@ int shell_tick(struct shell *sh)
         dirty = 1;
     }
     if (!sh->blanked && sh->cfg.screen_timeout > 0 && sh->job == JOB_NONE && !sh->call_active &&
+        !(sh->tube.p.pid > 0 && sh->tube.p.video) &&
         sh->now - sh->last_input > sh->cfg.screen_timeout * 1000L) {
         sh->blanked = 1;
         if (sh->brightness > 0)
@@ -2562,8 +3440,12 @@ int shell_tick(struct shell *sh)
 int shell_timeout(const struct shell *sh)
 {
     long ms_to_minute;
-    if (sh->app_pid)
+    if (sh->app_pid || (sh->tube.p.pid > 0 && sh->tube.p.video))
         return 250;
+    if (sh->tube.fetch_pid > 0 || sh->tube.thumbs_pid > 0)
+        return 150;
+    if (sh->tube.p.pid > 0)  /* read mpv's news; redraw the time */
+        return sh->stack[sh->depth - 1] == SCR_TUBE_PLAYER && !sh->blanked ? 500 : 1000;
     if (sh->call_state[0])
         return 500;
     if (sh->job != JOB_NONE || sh->store.fetch_pid > 0)
@@ -2589,7 +3471,7 @@ int shell_timeout(const struct shell *sh)
 
 int shell_app_running(const struct shell *sh)
 {
-    return sh->app_pid != 0;
+    return sh->app_pid != 0 || (sh->tube.p.pid > 0 && sh->tube.p.video);
 }
 
 /* ---- setup ---------------------------------------------------------- */
@@ -2630,6 +3512,11 @@ int shell_init(struct shell *sh, struct vx_surface *surf, const char *config_pat
     store_init(&sh->store, sh->cfg.cache_dir, sh->cfg.store_url);
     snprintf(sh->scan_path, sizeof(sh->scan_path), "%s/wifi-scan.txt", sh->cfg.cache_dir);
     snprintf(sh->bt_scan_path, sizeof(sh->bt_scan_path), "%s/bt-scan.txt", sh->cfg.cache_dir);
+    {
+        char tube_cache[300];
+        snprintf(tube_cache, sizeof(tube_cache), "%s/tube", sh->cfg.cache_dir);
+        tube_init(&sh->tube, sh->cfg.tube_cmd, sh->cfg.tube_dir, tube_cache);
+    }
     sys_update(&sh->sys);
     sh->brightness = sys_backlight_init(sh->cfg.backlight) == 0 ? sys_backlight_get() : -1;
     if (sh->brightness == 0)
@@ -2641,6 +3528,9 @@ void shell_shutdown(struct shell *sh)
 {
     if (sh->app_pid)
         proc_kill_group(sh->app_pid, 1000);
+    tube_player_stop(&sh->tube);
+    tube_reset(&sh->tube);
+    tube_drop_thumbs(&sh->tube);
     store_unload(&sh->store);
     apps_free(&sh->apps);
     nk_free(&sh->ctx);

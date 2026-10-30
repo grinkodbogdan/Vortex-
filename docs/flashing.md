@@ -103,9 +103,21 @@ dialer.
   `mmcli -i any --pin=1234` for now).  Messages are kept in
   `/var/lib/vortex/sms/messages.tsv`.  Call audio and the microphone need the
   patched sound module (built with the image).
-* **Torch:** assumed to be on GPIO 31 like Qualcomm's reference boards;
-  if the Torch app says "No torch on this phone" or nothing lights up, that
-  guess was wrong.
+* **Torch:** gpio31 and gpio32 together, as in Nokia's own kernel (the LED
+  hangs off a transistor pair).  `ls /sys/class/leds` should list
+  `white:torch` and `white:torch-en`;
+  `echo 255 | tee /sys/class/leds/white:torch*/brightness` lights it by hand.
+* **Tube** (YouTube through Invidious): Search, Subscriptions, Popular,
+  Trending, History, Saved.  On a video: OK opens it, the Call key or
+  "Watch" plays it full screen, the left soft key / "Listen" plays the sound
+  only (keeps playing in the background; Tube > Now playing).  While a video
+  plays: OK pause, Left/Right 10 s, 4/6 1 min, Up/Down volume, 5 progress,
+  `#` turn the picture sideways (bigger), `*` picture off, Back stops.
+  Settings has the quality (144p/240p/360p; lower plays smoother) and the
+  server: most public Invidious servers block apps now, so if lists do not
+  load pick one that "works" or type your own (left soft key "Type").
+  Logs: `cat /var/log/vortex-shell/current` (the helper's messages);
+  `/usr/libexec/vortex/vortex-tube popular /tmp/p.tsv` tests a server.
 * **Camera:** not supported (no MSM8909 camera driver in Linux).
 * **Bluetooth:** Settings → Bluetooth switches it, Bluetooth devices scans and
   connects (OK on a device pairs and connects it). From a shell:

@@ -114,6 +114,7 @@ void apps_scan(struct vx_apps *a, const char *apps_dir)
     add_builtin(a, APP_BUILTIN_CALC, "vortex.calculator", "Calculator", 0xffc4b2f0);
     add_builtin(a, APP_BUILTIN_MESSAGES, "vortex.messages", "Messages", 0xff9fd4f5);
     add_builtin(a, APP_BUILTIN_TORCH, "vortex.torch", "Torch", 0xfff5e39f);
+    add_builtin(a, APP_BUILTIN_TUBE, "vortex.tube", "Tube", 0xffe8423f);
     first_kai = a->count;
 
     d = opendir(apps_dir);

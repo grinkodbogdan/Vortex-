@@ -1,0 +1,452 @@
+#!/usr/bin/python3
+# Invidious client back end for the shell's Tube app.  The shell draws the
+# screens; this does the network, picks streams and starts mpv.
+#
+#   vortex-tube search QUERY OUT [PAGE]   video lists, written to OUT:
+#   vortex-tube popular OUT                 one video per line,
+#   vortex-tube trending OUT                id<TAB>title<TAB>author<TAB>authorId
+#   vortex-tube channel UCID OUT            <TAB>seconds<TAB>views<TAB>published
+#   vortex-tube feed OUT                    newest videos of the subscriptions
+#   vortex-tube video ID OUT              first line "V<TAB>id<TAB>title<TAB>author
+#                                           <TAB>authorId<TAB>seconds<TAB>views
+#                                           <TAB>likes<TAB>published<TAB>description"
+#                                           then the related videos as above
+#   vortex-tube thumbs SIZE ID...         CACHE/thumbs/SIZE/ID.jpg (SIZE: default
+#                                           120x90 or mqdefault 320x180)
+#   vortex-tube instances OUT             "url<TAB>ok(1/0)<TAB>ms" per server
+#   vortex-tube play ID video|audio SOCKET [START]
+#                                         exec mpv (JSON IPC on SOCKET), from START s;
+#                                           a failure is written to SOCKET.err
+#
+# On failure OUT holds one line "!message" and the exit code is 1.
+#
+# Files (VORTEX_TUBE_DIR, default /var/lib/vortex/tube):
+#   settings      key=value: instance=URL, quality=144|240|360
+#   subs.tsv      authorId<TAB>author (subscriptions; written by the shell)
+# Cache (VORTEX_TUBE_CACHE, default /var/cache/vortex/tube): thumbnails.
+#
+# Text in the files has tabs and newlines replaced (titles) or escaped as
+# \t \n \\ (the description).
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+DIR = os.environ.get("VORTEX_TUBE_DIR", "/var/lib/vortex/tube")
+CACHE = os.environ.get("VORTEX_TUBE_CACHE", "/var/cache/vortex/tube")
+SETTINGS = DIR + "/settings"
+INSTANCES_URL = os.environ.get("VORTEX_TUBE_INSTANCES",
+                               "https://api.invidious.io/instances.json?sort_by=health")
+UA = "Mozilla/5.0 (Linux; KAIOS/2.5) Vortex-Tube/1"
+TIMEOUT = 20
+
+
+class Fail(Exception):
+    pass
+
+
+def log(*a):
+    print("vortex-tube:", *a, file=sys.stderr, flush=True)
+
+
+# ---- settings -----------------------------------------------------------------
+
+def settings():
+    s = {"instance": "", "quality": "240"}
+    try:
+        with open(SETTINGS) as f:
+            for line in f:
+                k, _, v = line.strip().partition("=")
+                if k:
+                    s[k] = v
+    except OSError:
+        pass
+    return s
+
+
+def save_setting(key, value):
+    s = settings()
+    s[key] = value
+    os.makedirs(DIR, exist_ok=True)
+    tmp = SETTINGS + ".tmp"
+    with open(tmp, "w") as f:
+        for k, v in s.items():
+            f.write("%s=%s\n" % (k, v))
+    os.replace(tmp, SETTINGS)
+
+
+# ---- HTTP -----------------------------------------------------------------------
+
+def fetch(url, timeout=TIMEOUT):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def fetch_json(url, timeout=TIMEOUT):
+    return json.loads(fetch(url, timeout))
+
+
+def known_instances():
+    """Public servers, healthiest first, without the ones that say their
+    API is off."""
+    out = []
+    try:
+        for name, info in fetch_json(INSTANCES_URL, 15):
+            if info.get("type") != "https" or info.get("api") is False:
+                continue
+            out.append(info.get("uri") or "https://" + name)
+    except (OSError, ValueError) as e:
+        log("instance list:", e)
+    return out
+
+
+def api_ok(base, timeout=10):
+    """The server answers API requests with JSON (many public servers only
+    serve their web pages, or block scripts)."""
+    try:
+        data = fetch_json(base + "/api/v1/trending?fields=videoId", timeout)
+        return isinstance(data, list)
+    except (OSError, ValueError):
+        return False
+
+
+class Api:
+    """GET /api/v1/... on the chosen server; when it fails, finds another
+    that works and remembers it."""
+
+    def __init__(self):
+        self.base = settings().get("instance", "").rstrip("/")
+        self.switched = False
+
+    def get(self, path):
+        last = None
+        if self.base:
+            try:
+                return fetch_json(self.base + path)
+            except (OSError, ValueError) as e:
+                last = e
+                log(self.base, e)
+        for base in known_instances():
+            base = base.rstrip("/")
+            if base == self.base:
+                continue
+            try:
+                data = fetch_json(base + path)
+            except (OSError, ValueError) as e:
+                last = e
+                log(base, e)
+                continue
+            self.base = base
+            save_setting("instance", base)
+            return data
+        if last is None:
+            raise Fail("No Invidious server set (Tube > Settings)")
+        raise Fail("No Invidious server answers (%s)" % short_error(last))
+
+
+def short_error(e):
+    if isinstance(e, urllib.error.HTTPError):
+        return "HTTP %d" % e.code
+    if isinstance(e, urllib.error.URLError):
+        return str(e.reason)[:60]
+    return str(e)[:60]
+
+
+# ---- output --------------------------------------------------------------------
+
+def flat(s):
+    return " ".join(str(s or "").split())
+
+
+def esc(s):
+    return str(s or "").replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "")
+
+
+def write_out(path, lines):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        for line in lines:
+            f.write(line + "\n")
+    os.replace(tmp, path)
+
+
+def video_line(v):
+    return "\t".join([
+        flat(v.get("videoId")), flat(v.get("title")), flat(v.get("author")),
+        flat(v.get("authorId")), str(int(v.get("lengthSeconds") or 0)),
+        str(int(v.get("viewCount") or 0)), flat(v.get("publishedText")),
+    ])
+
+
+def videos(items):
+    out = []
+    for v in items or []:
+        if isinstance(v, dict) and v.get("type", "video") == "video" and v.get("videoId"):
+            if v.get("liveNow") or v.get("isUpcoming"):
+                continue
+            out.append(video_line(v))
+    return out
+
+
+LIST_FIELDS = "videoId,title,author,authorId,lengthSeconds,viewCount,publishedText,type,liveNow,isUpcoming"
+
+
+def cmd_list(kind, args, out):
+    api = Api()
+    if kind == "search":
+        q = urllib.parse.quote(args[0])
+        page = int(args[1]) if len(args) > 1 else 1
+        lines = videos(api.get("/api/v1/search?type=video&page=%d&q=%s&fields=%s" % (page, q, LIST_FIELDS)))
+    elif kind == "popular":
+        lines = videos(api.get("/api/v1/popular?fields=" + LIST_FIELDS))
+    elif kind == "trending":
+        lines = videos(api.get("/api/v1/trending?fields=" + LIST_FIELDS))
+    elif kind == "channel":
+        data = api.get("/api/v1/channels/%s/videos" % urllib.parse.quote(args[0]))
+        lines = videos(data.get("videos") if isinstance(data, dict) else data)
+    else:  # feed
+        lines = feed(api)
+    write_out(out, lines)
+
+
+def feed(api):
+    subs = []
+    try:
+        with open(DIR + "/subs.tsv") as f:
+            subs = [l.split("\t")[0] for l in f if l.strip()]
+    except OSError:
+        pass
+    if not subs:
+        raise Fail("No subscriptions yet")
+    api.get("/api/v1/trending?fields=videoId")  # settle on a working server first
+
+    def one(ucid):
+        try:
+            d = fetch_json(api.base + "/api/v1/channels/%s/videos" % urllib.parse.quote(ucid))
+            return (d.get("videos") if isinstance(d, dict) else d)[:15]
+        except (OSError, ValueError, TypeError, AttributeError) as e:
+            log("feed", ucid, e)
+            return []
+
+    with ThreadPoolExecutor(4) as ex:
+        found = [v for vs in ex.map(one, subs[:40]) for v in vs or []]
+    found.sort(key=lambda v: v.get("published") or 0, reverse=True)
+    return videos(found[:80])
+
+
+def cmd_video(vid, out):
+    api = Api()
+    v = api.get("/api/v1/videos/%s?fields=videoId,title,author,authorId,lengthSeconds,viewCount,"
+                "likeCount,publishedText,description,recommendedVideos" % urllib.parse.quote(vid))
+    head = "\t".join(["V", flat(v.get("videoId") or vid), flat(v.get("title")), flat(v.get("author")),
+                      flat(v.get("authorId")), str(int(v.get("lengthSeconds") or 0)),
+                      str(int(v.get("viewCount") or 0)), str(int(v.get("likeCount") or 0)),
+                      flat(v.get("publishedText")), esc(v.get("description"))])
+    related = v.get("recommendedVideos") or []
+    write_out(out, [head] + videos(related))
+
+
+def cmd_thumbs(size, ids):
+    if size not in ("default", "mqdefault"):
+        raise Fail("bad size")
+    d = "%s/thumbs/%s" % (CACHE, size)
+    os.makedirs(d, exist_ok=True)
+    base = settings().get("instance", "").rstrip("/")
+
+    def one(vid):
+        if not vid.replace("-", "").replace("_", "").isalnum():
+            return
+        path = "%s/%s.jpg" % (d, vid)
+        if os.path.exists(path):
+            return
+        # the server's proxy first (ytimg may be blocked), then YouTube's
+        urls = ["https://i.ytimg.com/vi/%s/%s.jpg" % (vid, size)]
+        if base:
+            urls.insert(0, "%s/vi/%s/%s.jpg" % (base, vid, size))
+        for url in urls:
+            try:
+                data = fetch(url, 15)
+            except OSError:
+                continue
+            if data[:2] == b"\xff\xd8":
+                with open(path + ".tmp", "wb") as f:
+                    f.write(data)
+                os.replace(path + ".tmp", path)
+                return
+
+    with ThreadPoolExecutor(4) as ex:
+        list(ex.map(one, ids[:60]))
+    # keep the cache small: drop the oldest beyond 400 files
+    files = sorted((os.path.getmtime(os.path.join(d, f)), f) for f in os.listdir(d))
+    for _, f in files[:-400]:
+        try:
+            os.unlink(os.path.join(d, f))
+        except OSError:
+            pass
+
+
+def cmd_instances(out):
+    cands = known_instances()
+    cur = settings().get("instance", "").rstrip("/")
+    if cur and cur not in cands:
+        cands.insert(0, cur)
+
+    def probe(base):
+        t = time.monotonic()
+        ok = api_ok(base.rstrip("/"))
+        return "%s\t%d\t%d" % (base.rstrip("/"), 1 if ok else 0, int((time.monotonic() - t) * 1000))
+
+    with ThreadPoolExecutor(6) as ex:
+        lines = list(ex.map(probe, cands[:20]))
+    lines.sort(key=lambda l: (-int(l.split("\t")[1]), int(l.split("\t")[2])))
+    if not lines:
+        raise Fail("Could not get the server list")
+    write_out(out, lines)
+
+
+# ---- playback ---------------------------------------------------------------------
+
+AUDIO_PREF = ["140", "139", "251", "250", "249"]
+
+
+def absolute(base, url):
+    return base + url if url.startswith("/") else url
+
+
+def pick_streams(api, vid, mode, quality):
+    """(video_url or None, audio_url or None) for mpv."""
+    try:
+        v = api.get("/api/v1/videos/%s?local=true&fields=adaptiveFormats,formatStreams" % vid)
+    except Fail as e:
+        log("stream info:", e)
+        v = {}
+    base = api.base
+    adaptive = v.get("adaptiveFormats") or []
+    audio = None
+    by_itag = {str(f.get("itag")): f for f in adaptive if f.get("url")}
+    for itag in AUDIO_PREF:
+        if itag in by_itag:
+            audio = absolute(base, by_itag[itag]["url"])
+            break
+    if not audio:
+        auds = [f for f in adaptive if str(f.get("type", "")).startswith("audio/") and f.get("url")]
+        auds.sort(key=lambda f: int(f.get("bitrate") or 0))
+        if auds:
+            audio = absolute(base, auds[0]["url"])
+    if not audio and base:
+        audio = "%s/latest_version?id=%s&itag=140&local=true" % (base, vid)
+    if mode == "audio":
+        return None, audio
+
+    q = int(quality)
+
+    def height(f):
+        try:
+            return int(str(f.get("resolution") or f.get("qualityLabel") or "0").split("p")[0])
+        except ValueError:
+            return 0
+
+    vids = [f for f in adaptive if str(f.get("type", "")).startswith("video/") and f.get("url")
+            and 0 < height(f) <= q]
+    # H.264 decodes fastest in software, VP9 next; AV1 is far too slow here
+    vids = [f for f in vids if any(c in str(f.get("type")) for c in ("avc1", "vp9", "vp09"))]
+    vids.sort(key=lambda f: (-height(f), 0 if "avc1" in str(f.get("type")) else 1,
+                             int(f.get("fps") or 30)))
+    if vids and audio:
+        return absolute(base, vids[0]["url"]), audio
+    for f in v.get("formatStreams") or []:  # combined 360p (itag 18)
+        if f.get("url"):
+            return absolute(base, f["url"]), None
+    if base:
+        return "%s/latest_version?id=%s&itag=18&local=true" % (base, vid), None
+    raise Fail("No playable stream")
+
+
+def cmd_play(vid, mode, sock, start=0):
+    if not vid.replace("-", "").replace("_", "").isalnum():
+        raise Fail("bad video id")
+    s = settings()
+    api = Api()
+    video, audio = pick_streams(api, vid, mode, s.get("quality") or "240")
+    argv = ["mpv", "--no-config", "--really-quiet", "--no-terminal", "--input-ipc-server=" + sock,
+            "--input-default-bindings=no", "--osc=no", "--ytdl=no", "--load-scripts=no",
+            "--cache=yes", "--demuxer-max-bytes=12MiB", "--demuxer-max-back-bytes=3MiB",
+            "--demuxer-readahead-secs=20", "--network-timeout=30",
+            "--user-agent=" + UA, "--ao=alsa", "--volume=80", "--title=" + vid]
+    if start > 0:
+        argv.append("--start=%d" % start)
+    if mode == "audio" or not video:
+        argv += ["--no-video", "--vid=no"]
+        url = audio
+    else:
+        argv += ["--vo=drm", "--hwdec=no", "--vd-lavc-threads=4", "--vd-lavc-fast",
+                 "--vd-lavc-skiploopfilter=all", "--framedrop=vo", "--sws-scaler=fast-bilinear",
+                 "--osd-level=1", "--osd-font-size=36", "--osd-bar-h=4", "--osd-duration=1200",
+                 "--keepaspect=yes", "--video-sync=audio"]
+        if audio:
+            argv.append("--audio-file=" + audio)
+        url = video
+    if not url:
+        raise Fail("No playable stream")
+    try:
+        os.unlink(sock)
+    except OSError:
+        pass
+    # The shell runs with oom_score_adj -900 and mpv would inherit it: when
+    # memory runs out, the video should go before the shell does.
+    try:
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write("300")
+    except OSError:
+        pass
+    log("playing", vid, mode, url.split("?")[0])
+    sys.stdout.flush()
+    os.execvp("mpv", argv + ["--", url])
+
+
+def main():
+    a = sys.argv[1:]
+    cmd = a[0] if a else ""
+    out = None
+    try:
+        if cmd in ("popular", "trending", "feed") and len(a) == 2:
+            out = a[1]
+            cmd_list(cmd, [], out)
+        elif cmd == "search" and len(a) in (3, 4):
+            out = a[2]
+            cmd_list(cmd, [a[1]] + a[3:], out)
+        elif cmd == "channel" and len(a) == 3:
+            out = a[2]
+            cmd_list(cmd, [a[1]], out)
+        elif cmd == "video" and len(a) == 3:
+            out = a[2]
+            cmd_video(a[1], out)
+        elif cmd == "thumbs" and len(a) >= 3:
+            cmd_thumbs(a[1], a[2:])
+        elif cmd == "instances" and len(a) == 2:
+            out = a[1]
+            cmd_instances(out)
+        elif cmd == "play" and len(a) in (4, 5) and a[2] in ("video", "audio"):
+            out = a[3] + ".err"
+            cmd_play(a[1], a[2], a[3], int(a[4]) if len(a) == 5 else 0)
+        else:
+            sys.exit("usage: vortex-tube search Q OUT [PAGE]|popular OUT|trending OUT|channel UCID OUT|"
+                     "feed OUT|video ID OUT|thumbs SIZE ID...|instances OUT|play ID video|audio SOCKET [START]")
+    except (Fail, OSError, ValueError) as e:
+        msg = str(e) if isinstance(e, Fail) else short_error(e)
+        log(msg)
+        if out:
+            try:
+                write_out(out, ["!" + flat(msg)])
+            except OSError:
+                pass
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
