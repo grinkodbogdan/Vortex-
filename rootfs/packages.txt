@@ -30,6 +30,7 @@ iproute2
 wpa_supplicant
 dhcpcd
 bluez              # Bluetooth (bluetoothd, bluetoothctl, btmgmt)
+bluez-alsa         # Bluetooth headphones (A2DP) for ALSA programs
 ca-certificates
 curl
 

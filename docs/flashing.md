@@ -99,8 +99,10 @@ dialer.
   release (device tree in `tools/phone/dts/`).
 * **Bluetooth:** Settings → Bluetooth switches it, Bluetooth devices scans and
   connects (OK on a device pairs and connects it). From a shell:
-  `vortex-radio bt on|off|status|scan|connect MAC|forget MAC`. Audio to
-  Bluetooth headphones is not routed yet.
+  `vortex-radio bt on|off|status|scan|connect MAC|forget MAC`. Connected
+  Bluetooth headphones get the sound automatically (bluez-alsa) and the
+  phone takes it back when they disconnect; `vortex-audio output` says
+  where sound goes.
 * **Wi-Fi does not come on:** Settings shows "No Wi-Fi hardware found" when
   the Wi-Fi chip did not start. `dmesg | grep -i -e wcn -e pronto -e firmware`
   shows why (the firmware comes from the phone's `modem` partition).

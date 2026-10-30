@@ -34,9 +34,14 @@
 		clock-frequency = <0>;
 	};
 
-	sound: sound {
+	sound: sound@7702000 {
 		compatible = "qcom,msm8916-qdsp6-sndcard";
 		model = "msm8909";
+		/* LPASS CSR I/O mux registers, the same on MSM8909 (msm8909-mtp.dtsi:
+		 * csr_gp_io_mux_mic_ctl, csr_gp_io_mux_spkr_ctl); the driver
+		 * refuses to probe without them */
+		reg = <0x07702000 0x4>, <0x07702004 0x4>;
+		reg-names = "mic-iomux", "spkr-iomux";
 
 		pinctrl-0 = <&cdc_pdm_default>;
 		pinctrl-1 = <&cdc_pdm_sleep>;

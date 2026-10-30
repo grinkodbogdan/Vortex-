@@ -1,0 +1,2 @@
+# Vortex: play to Bluetooth headphones and speakers (A2DP) only.
+OPTS="-p a2dp-source"

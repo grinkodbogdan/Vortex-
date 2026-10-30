@@ -52,7 +52,7 @@ bt_on() {
 	done
 	# An unconfigured controller needs its address before it can be used.
 	btmgmt --index 0 public-addr "$(bt_address)" >/dev/null 2>&1 || true
-	svc_up dbus bluetoothd
+	svc_up dbus bluetoothd bluez-alsa
 	i=0
 	until btctl show | grep -q 'Controller'; do
 		i=$((i + 1))
@@ -65,7 +65,7 @@ bt_on() {
 
 bt_off() {
 	btctl power off >/dev/null || true
-	svc_down bluetoothd
+	svc_down bluez-alsa bluetoothd
 	rfkill block bluetooth 2>/dev/null || true
 }
 

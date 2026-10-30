@@ -187,13 +187,15 @@ EOF
 SV=$ROOT/etc/runit/runsvdir/default
 mkdir -p "$SV"
 rm -f "$SV"/agetty-*
-for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd audio dbus bluetoothd; do
+for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd audio dbus bluetoothd bluez-alsa; do
 	[ -d "$ROOT/etc/sv/$s" ] && ln -sf "/etc/sv/$s" "$SV/$s"
 done
 # Wi-Fi and Bluetooth start off; vortex-radio switches them and remembers it.
 # Saves ~4 MB (Wi-Fi) and ~3 MB (dbus + bluetoothd) and battery.
 touch "$ROOT/etc/sv/wpa_supplicant/down" "$ROOT/etc/sv/dhcpcd/down" \
-	"$ROOT/etc/sv/dbus/down" "$ROOT/etc/sv/bluetoothd/down"
+	"$ROOT/etc/sv/dbus/down" "$ROOT/etc/sv/bluetoothd/down" "$ROOT/etc/sv/bluez-alsa/down"
+# sound starts on the phone; vortex-audio follows Bluetooth headphones
+cp "$ROOT/usr/share/vortex/asound-phone.conf" "$ROOT/etc/asound.conf"
 # Serial console (ttyMSM0, 115200) for development.
 if [ "${VORTEX_SERIAL_GETTY:-0}" = 1 ]; then
 	ln -sf /etc/sv/agetty-ttyMSM0 "$SV/" 2>/dev/null ||
