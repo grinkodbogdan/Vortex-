@@ -9,12 +9,10 @@
 # Run it inside a Wayland kiosk compositor (see vortex-webview-cage).
 # Set VORTEX_PROXY=http://host:port to route web traffic through a proxy.
 import base64
-import fcntl
 import glob
 import json
 import mimetypes
 import os
-import struct
 import subprocess
 import sys
 
@@ -127,73 +125,24 @@ def storage_list(kind):
     return out
 
 
-# ---- vibration: force feedback on the PMIC's vibrator ---------------------
-
-FF_RUMBLE, EV_FF = 0x50, 0x15
-# struct ff_effect: 14 bytes of header, the union aligned to a pointer
-_PTR = struct.calcsize("P")
-_FF_HDR = 16  # 14 bytes of fields, then the union at pointer alignment
-_FF_SIZE = _FF_HDR + (28 if _PTR == 4 else 32)
-EVIOCSFF = (1 << 30) | (_FF_SIZE << 16) | (ord("E") << 8) | 0x80  # _IOW('E', 0x80, ff_effect)
-EVIOCRMFF = (1 << 30) | (4 << 16) | (ord("E") << 8) | 0x81
-
+# ---- vibration: vortex-vibrate runs the motor ------------------------------
 
 class Vibrator:
+    """navigator.vibrate(): a new pattern replaces the running one."""
+
     def __init__(self):
-        self.fd = None
-        for dev in sorted(glob.glob("/sys/class/input/event*/device/name")):
-            try:
-                with open(dev) as f:
-                    name = f.read().strip()
-            except OSError:
-                continue
-            if "vib" in name:
-                try:
-                    self.fd = os.open("/dev/input/" + dev.split("/")[4], os.O_RDWR)
-                except OSError:
-                    pass
-                break
-        self.timer = None
-
-    def _pulse(self, ms):
-        effect = bytearray(_FF_SIZE)
-        struct.pack_into("=HhHHHHH", effect, 0, FF_RUMBLE, -1, 0, 0, 0, int(ms), 0)
-        struct.pack_into("=HH", effect, _FF_HDR, 0xFFFF, 0xFFFF)
-        try:
-            fcntl.ioctl(self.fd, EVIOCSFF, effect)
-            eid = struct.unpack_from("=h", effect, 2)[0]
-            now = struct.pack("@LLHHi", 0, 0, EV_FF, eid, 1)  # struct input_event
-            os.write(self.fd, now)
-            GLib.timeout_add(int(ms) + 50, self._erase, eid)
-        except OSError:
-            pass
-
-    def _erase(self, eid):
-        try:
-            fcntl.ioctl(self.fd, EVIOCRMFF, eid)
-        except OSError:
-            pass
-        return False
+        self.proc = None
 
     def vibrate(self, pattern):
-        """KaiOS/Web pattern: [on, off, on, ...] in ms; [] or [0] stops."""
-        if self.fd is None:
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+        steps = [str(max(0, min(int(x), 10000))) for x in pattern][:32]
+        if not any(int(x) for x in steps):
+            return True
+        try:
+            self.proc = subprocess.Popen(["vortex-vibrate"] + steps)
+        except OSError:
             return False
-        if self.timer:
-            GLib.source_remove(self.timer)
-            self.timer = None
-        steps = [max(0, min(int(x), 10000)) for x in pattern][:32]
-
-        def step(i=0):
-            self.timer = None
-            if i >= len(steps):
-                return False
-            if i % 2 == 0 and steps[i]:
-                self._pulse(steps[i])
-            self.timer = GLib.timeout_add(max(steps[i], 1), step, i + 1)
-            return False
-
-        step()
         return True
 
 

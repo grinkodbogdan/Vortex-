@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -d /var/log/modem ] || mkdir -p /var/log/modem
+printf 's32768\nn2\n' > /var/log/modem/config
+exec svlogd -tt /var/log/modem

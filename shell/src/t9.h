@@ -9,7 +9,7 @@
 enum t9_mode { T9_LOWER, T9_CAPS_ONCE, T9_DIGITS };
 
 struct t9 {
-    char text[64];
+    char text[200];   /* an SMS is up to 160 characters */
     int len;
     enum t9_mode mode;
     enum vx_key pending_key;

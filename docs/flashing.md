@@ -97,6 +97,16 @@ dialer.
   says whether the drivers loaded and the mixer was set, `aplay -l` lists the
   card, and `speaker-test -c2 -twav -l1` plays a test. Audio is new in this
   release (device tree in `tools/phone/dts/`).
+* **Calls and SMS** (Phone and Messages): ModemManager talks to the modem;
+  `cat /var/log/modem/current` shows what the watcher did, `mmcli -m any`
+  the modem's state (a SIM PIN must be entered with
+  `mmcli -i any --pin=1234` for now).  Messages are kept in
+  `/var/lib/vortex/sms/messages.tsv`.  Call audio and the microphone need the
+  patched sound module (built with the image).
+* **Torch:** assumed to be on GPIO 31 like Qualcomm's reference boards;
+  if the Torch app says "No torch on this phone" or nothing lights up, that
+  guess was wrong.
+* **Camera:** not supported (no MSM8909 camera driver in Linux).
 * **Bluetooth:** Settings → Bluetooth switches it, Bluetooth devices scans and
   connects (OK on a device pairs and connects it). From a shell:
   `vortex-radio bt on|off|status|scan|connect MAC|forget MAC`. Connected

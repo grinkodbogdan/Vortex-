@@ -31,8 +31,28 @@
 #include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include <dt-bindings/sound/qcom,q6voice.h>
+#include <dt-bindings/leds/common.h>
 
 / {
+	/*
+	 * Torch: Qualcomm's MSM8909 reference boards drive the camera flash
+	 * through a flash chip on gpio31 (FLASH_EN) and gpio32 (FLASH_NOW);
+	 * torch mode is FLASH_EN alone.  Assumed to be the same on the 6300 4G
+	 * (unverified; both pins are otherwise unused there).
+	 */
+	torch {
+		compatible = "gpio-leds";
+		pinctrl-0 = <&torch_default>;
+		pinctrl-names = "default";
+
+		led-torch {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			gpios = <&tlmm 31 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+
 	sound: sound@7702000 {
 		compatible = "qcom,msm8916-qdsp6-sndcard";
 		model = "msm8909";
@@ -41,6 +61,11 @@
 		 * refuses to probe without them */
 		reg = <0x07702000 0x4>, <0x07702004 0x4>;
 		reg-names = "mic-iomux", "spkr-iomux";
+		/* microphones and their bias, as on Qualcomm's MSM8909 QRD
+		 * (msm8909-qrd-skuc.dtsi): handset, headset, secondary */
+		audio-routing = "AMIC1", "MIC BIAS Internal1",
+				"AMIC2", "MIC BIAS Internal2",
+				"AMIC3", "MIC BIAS Internal3";
 
 		pinctrl-0 = <&cdc_pdm_default>;
 		pinctrl-1 = <&cdc_pdm_sleep>;
@@ -275,6 +300,22 @@
 };
 
 &tlmm {
+	torch_default: torch-default-state {
+		en-pins {
+			pins = "gpio31";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+		now-pins {
+			pins = "gpio32";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+			output-low;
+		};
+	};
+
 	cdc_pdm_default: cdc-pdm-default-state {
 		pins = "gpio59", "gpio60", "gpio61", "gpio62", "gpio63", "gpio64";
 		function = "cdc_pdm0";

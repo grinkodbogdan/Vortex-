@@ -13,16 +13,28 @@ enum screen {
     SCR_HOME, SCR_LAUNCHER,
     SCR_STORE, SCR_STORE_LIST, SCR_STORE_DETAIL,
     SCR_SETTINGS, SCR_WIFI, SCR_BT, SCR_SYSINFO, SCR_DIALER, SCR_CALC,
+    SCR_CALL, SCR_MESSAGES, SCR_THREAD,
     SCR_INPUT, SCR_MENU,
 };
 
 enum job_kind { JOB_NONE, JOB_INSTALL, JOB_REMOVE, JOB_WIFI_SCAN, JOB_WIFI_CONNECT,
-                JOB_WIFI_TOGGLE, JOB_BT_TOGGLE, JOB_BT_SCAN, JOB_BT_CONNECT, JOB_CALL };
+                JOB_WIFI_TOGGLE, JOB_BT_TOGGLE, JOB_BT_SCAN, JOB_BT_CONNECT, JOB_CALL,
+                JOB_SMS };
 enum menu_kind { MENU_POWER, MENU_APP_OPTIONS, MENU_CONFIRM_REMOVE };
-enum input_kind { INPUT_SEARCH, INPUT_WIFI_PSK };
+enum input_kind { INPUT_SEARCH, INPUT_WIFI_PSK, INPUT_SMS, INPUT_SMS_NUMBER };
 
 #define WIFI_MAX 24
 #define BT_MAX 24
+#define MSG_MAX 200
+#define CONV_MAX 40
+
+/* One SMS from /var/lib/vortex/sms/messages.tsv (see vortex-modem). */
+struct sms {
+    long t;
+    char out, failed;
+    char number[24];
+    char text[200];
+};
 
 struct shell {
     struct vx_config cfg;
@@ -53,6 +65,24 @@ struct shell {
     char bt_name[BT_MAX][40];
     int bt_paired[BT_MAX];
     char dial[32];
+
+    /* modem: /run/vortex/{modem,call,sms-new}, written by vortex-modem */
+    int modem_seen;                /* the files exist: poll them */
+    long modem_polled;
+    char modem_state[16], modem_op[24];
+    int modem_signal;
+    char call_state[16], call_number[32];
+    int call_incoming, call_speaker;
+    long call_since;               /* epoch */
+    long sms_new_mtime;
+
+    /* messages */
+    int msg_n, msg_unread;
+    struct sms msgs[MSG_MAX];
+    int conv_n, conv_sel, conv_top;
+    struct { char number[24]; int last, unread; } conv[CONV_MAX];
+    char thread_number[24];
+    int thread_scroll;
 
     /* calculator */
     char calc_cur[24];             /* number being typed / shown */

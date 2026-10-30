@@ -8,6 +8,9 @@
 #                           connected; the "audio" service runs this
 #   vortex-audio mixer      set the mixer once
 #   vortex-audio output     print where sound goes: phone or bt
+#   vortex-audio call on|off|speaker|earpiece
+#                           route a voice call (the modem DSP's CS-Voice
+#                           session) to the earpiece or the speaker
 #   vortex-audio volume [up|down|get|N]
 #                           media volume, 0-15 (3 dB steps), remembered in
 #                           /var/lib/vortex/volume; prints the new level
@@ -117,6 +120,27 @@ setup)
 volume)
 	volume "${2:-get}"
 	;;
+call)
+	case ${2:-} in
+	on | earpiece)
+		c 'PRI_MI2S_RX Voice Mixer CS-Voice' 1
+		c 'CS-Voice Capture Mixer TERT_MI2S_TX' 1
+		c 'SPK DAC Switch' 0
+		c 'EAR_S' Switch
+		;;
+	speaker)
+		c 'EAR_S' ZERO
+		c 'SPK DAC Switch' 1
+		;;
+	off)
+		c 'PRI_MI2S_RX Voice Mixer CS-Voice' 0
+		c 'CS-Voice Capture Mixer TERT_MI2S_TX' 0
+		c 'EAR_S' ZERO
+		c 'SPK DAC Switch' 1
+		;;
+	*) echo "usage: vortex-audio call on|off|speaker|earpiece" >&2; exit 2 ;;
+	esac
+	;;
 output)
 	if grep -q vortex_bt /etc/asound.conf 2>/dev/null; then echo bt; else echo phone; fi
 	;;
@@ -124,7 +148,7 @@ mixer)
 	mixer
 	;;
 *)
-	echo "usage: vortex-audio setup|mixer|output|volume [up|down|get|N]" >&2
+	echo "usage: vortex-audio setup|mixer|output|volume [up|down|get|N]|call on|off|speaker|earpiece" >&2
 	exit 2
 	;;
 esac

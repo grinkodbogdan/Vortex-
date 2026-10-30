@@ -107,6 +107,10 @@ echo "$KVER" > "$K/kernel.release"
 cp "$LK2ND_IMG" "$K/lk2nd.img"
 mkdir -p "$ROOT/usr/lib/modules"
 cp -a "$KMOD" "$ROOT/usr/lib/modules/"
+# Patched modules (tools/phone/kernel): the MI2S bit clock fix the
+# microphone and call audio need.  Optional: without it, playback works.
+"$TOP/tools/phone/build-modules.sh" "$K/config" "$ROOT/usr/lib/modules/$KVER" ||
+	msg "WARNING: patched kernel modules not built (no microphone or call audio)"
 cp -a "$T/$GPUFW/usr/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null ||
 	cp -a "$T/$GPUFW/lib/firmware/." "$ROOT/usr/lib/firmware/" 2>/dev/null || true
 
@@ -136,7 +140,7 @@ make -s -C "$TOP/adbd" CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
 install -Dm755 "$TOP/adbd/vortex-adbd" "$ROOT/usr/libexec/vortex/vortex-adbd"
 make -s -C "$TOP/adbd" clean
 
-for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync vortex-audio vortex-radio; do
+for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync vortex-audio vortex-radio vortex-modem vortex-voice vortex-vibrate; do
 	install -Dm755 "$TOP/runtime/$f" "$ROOT/usr/libexec/vortex/$f"
 done
 install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
@@ -166,7 +170,7 @@ for g in video input audio; do
 done
 mkdir -p "$ROOT/var/lib/vortex/apps" "$ROOT/var/lib/vortex/data" "$ROOT/var/cache/vortex/web" \
 	"$ROOT/var/lib/vortex/storage/music" "$ROOT/var/lib/vortex/storage/pictures" \
-	"$ROOT/var/lib/vortex/storage/videos"
+	"$ROOT/var/lib/vortex/storage/videos" "$ROOT/var/lib/vortex/sms"
 chown -R 990:990 "$ROOT/var/lib/vortex" "$ROOT/var/cache/vortex"
 touch "$ROOT/etc/vortex/.firstboot"
 # the clock never starts earlier than this (core-services/04-vortex-clock.sh)
@@ -189,13 +193,14 @@ EOF
 SV=$ROOT/etc/runit/runsvdir/default
 mkdir -p "$SV"
 rm -f "$SV"/agetty-*
-for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd audio dbus bluetoothd bluez-alsa; do
+for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd audio dbus bluetoothd bluez-alsa polkitd modemmanager modem; do
 	[ -d "$ROOT/etc/sv/$s" ] && ln -sf "/etc/sv/$s" "$SV/$s"
 done
 # Wi-Fi and Bluetooth start off; vortex-radio switches them and remembers it.
-# Saves ~4 MB (Wi-Fi) and ~3 MB (dbus + bluetoothd) and battery.
+# Saves ~4 MB (Wi-Fi) and ~2 MB (bluetoothd) and battery.  dbus stays on:
+# calls and SMS (ModemManager) need it.
 touch "$ROOT/etc/sv/wpa_supplicant/down" "$ROOT/etc/sv/dhcpcd/down" \
-	"$ROOT/etc/sv/dbus/down" "$ROOT/etc/sv/bluetoothd/down" "$ROOT/etc/sv/bluez-alsa/down"
+	"$ROOT/etc/sv/bluetoothd/down" "$ROOT/etc/sv/bluez-alsa/down"
 # sound starts on the phone; vortex-audio follows Bluetooth headphones
 cp "$ROOT/usr/share/vortex/asound-phone.conf" "$ROOT/etc/asound.conf"
 # Serial console (ttyMSM0, 115200) for development.

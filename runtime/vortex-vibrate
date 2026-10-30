@@ -1,0 +1,58 @@
+#!/usr/bin/python3
+# Run the vibration motor (force feedback on the PM8909 vibrator).
+#
+#   vortex-vibrate ON [OFF ON ...]     pattern in milliseconds, as
+#                                      navigator.vibrate(): on, off, on, ...
+import fcntl
+import glob
+import os
+import struct
+import sys
+import time
+
+FF_RUMBLE, EV_FF = 0x50, 0x15
+# struct ff_effect: 14 bytes of fields, then a union aligned to a pointer
+PTR = struct.calcsize("P")
+HDR = 16
+SIZE = HDR + (28 if PTR == 4 else 32)
+EVIOCSFF = (1 << 30) | (SIZE << 16) | (ord("E") << 8) | 0x80
+EVIOCRMFF = (1 << 30) | (4 << 16) | (ord("E") << 8) | 0x81
+
+
+def device():
+    for name in sorted(glob.glob("/sys/class/input/event*/device/name")):
+        try:
+            with open(name) as f:
+                if "vib" in f.read():
+                    return "/dev/input/" + name.split("/")[4]
+        except OSError:
+            pass
+    return None
+
+
+def pulse(fd, ms):
+    effect = bytearray(SIZE)
+    struct.pack_into("=HhHHHHH", effect, 0, FF_RUMBLE, -1, 0, 0, 0, ms, 0)
+    struct.pack_into("=HH", effect, HDR, 0xFFFF, 0xFFFF)
+    fcntl.ioctl(fd, EVIOCSFF, effect)
+    eid = struct.unpack_from("=h", effect, 2)[0]
+    os.write(fd, struct.pack("@LLHHi", 0, 0, EV_FF, eid, 1))  # struct input_event
+    time.sleep(ms / 1000.0)
+    fcntl.ioctl(fd, EVIOCRMFF, eid)
+
+
+def main():
+    steps = [max(0, min(int(x), 10000)) for x in sys.argv[1:33]]
+    dev = device()
+    if not dev:
+        sys.exit("vortex-vibrate: no vibrator")
+    fd = os.open(dev, os.O_RDWR)
+    for i, ms in enumerate(steps):
+        if i % 2 == 0 and ms:
+            pulse(fd, ms)
+        elif ms:
+            time.sleep(ms / 1000.0)
+
+
+if __name__ == "__main__":
+    main()

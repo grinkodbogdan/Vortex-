@@ -1,2 +1,4 @@
 # Let the shell (group video) change the screen brightness.
 SUBSYSTEM=="backlight", ACTION=="add", RUN+="/bin/chgrp video /sys%p/brightness", RUN+="/bin/chmod g+w /sys%p/brightness"
+# Let the shell switch the torch.
+SUBSYSTEM=="leds", KERNEL=="*torch*|*flash*", ACTION=="add", RUN+="/bin/chgrp video /sys%p/brightness", RUN+="/bin/chmod g+w /sys%p/brightness"

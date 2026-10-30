@@ -58,8 +58,11 @@ rmtfs
 pd-mapper
 tqftpserv
 
-# Telephony (experimental)
+# Telephony (experimental): calls and SMS through ModemManager (QMI over
+# QRTR), which asks polkit
 dbus
+ModemManager
+polkit
 ofono
 
 # Audio

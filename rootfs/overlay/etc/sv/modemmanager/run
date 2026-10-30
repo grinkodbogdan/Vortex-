@@ -1,0 +1,6 @@
+#!/bin/sh
+# ModemManager (Void's package has no runit service).  The MSM8909 modem
+# is reached over QRTR: qrtr-ns, rmtfs, pd-mapper and tqftpserv run too.
+exec 2>&1
+sv check dbus >/dev/null || exit 1
+exec /usr/bin/ModemManager

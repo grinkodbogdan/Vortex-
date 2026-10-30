@@ -60,7 +60,17 @@ CONF=$OUT/vortex3.conf run store-retry "soft_left wait:400 shot:$OUT/store-error
 # regression: the store is unloaded while an app runs; returning to the
 # store page afterwards must not touch freed records
 CONF=$OUT/vortex2.conf run store-open "soft_left down ok ok soft_left wait:1500 wait:300 shot:$OUT/store-after-app.ppm"
-run options    "ok right right right right right soft_left shot:$OUT/options.ppm down ok shot:$OUT/confirm.ppm"
+# the first installed app comes after the 7 built-in ones
+run options    "ok right right right right right right right soft_left shot:$OUT/options.ppm down ok shot:$OUT/confirm.ppm"
+
+# Messages: conversations (unread first message), then a thread
+mkdir -p "$OUT/sms" "$OUT/run-none"
+cp tests/fixtures/sms/messages.tsv "$OUT/sms/"
+VORTEX_SMS_DIR=$OUT/sms VORTEX_RUN_DIR=$OUT/run-none run messages "ok right right right right right ok shot:$OUT/messages.ppm ok shot:$OUT/thread.ppm"
+# an incoming call takes the screen; the status bar shows the mobile signal
+VORTEX_SMS_DIR=$OUT/sms VORTEX_RUN_DIR=$(pwd)/tests/fixtures/run-call run call "wait:300 shot:$OUT/call.ppm"
+# no torch LED on the test machine: says so
+run torch      "ok right right right right right right ok shot:$OUT/torch.ppm"
 
 # boot logo, mid-animation, with the first-boot message
 echo "Setting up Vortex (first boot only). This takes a few minutes..." > "$OUT/splash.msg"

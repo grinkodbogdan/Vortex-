@@ -1,0 +1,40 @@
+#!/usr/bin/python3
+# Call audio on the Nokia 6300 4G: while a call is up, keep the modem DSP's
+# voice session ("CS-Voice" PCM) open in both directions.  No samples flow
+# through the CPU; the DSP connects the call to the codec.  The same idea as
+# postmarketOS' q6voiced.  Runs until killed (vortex-modem starts and stops
+# it with the call).
+#
+#   vortex-voice [ALSA-DEVICE]        default hw:msm8909,3
+import ctypes
+import signal
+import sys
+
+PLAYBACK, CAPTURE = 0, 1
+S16_LE, RW_INTERLEAVED = 2, 3
+
+asound = ctypes.CDLL("libasound.so.2")
+asound.snd_strerror.restype = ctypes.c_char_p
+dev = (sys.argv[1] if len(sys.argv) > 1 else "hw:msm8909,3").encode()
+pcms = []
+
+
+def check(rc, what):
+    if rc < 0:
+        sys.exit("vortex-voice: %s: %s" % (what, asound.snd_strerror(rc).decode()))
+
+
+for stream in (PLAYBACK, CAPTURE):
+    pcm = ctypes.c_void_p()
+    check(asound.snd_pcm_open(ctypes.byref(pcm), dev, stream, 0), "open")
+    # mono 8 kHz, as the voice DAI offers; 0.5 s latency
+    check(asound.snd_pcm_set_params(pcm, S16_LE, RW_INTERLEAVED, 1, 8000, 0, 500000), "params")
+    check(asound.snd_pcm_prepare(pcm), "prepare")
+    check(asound.snd_pcm_start(pcm), "start")
+    pcms.append(pcm)
+
+print("vortex-voice: call audio on", flush=True)
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+while True:
+    signal.pause()

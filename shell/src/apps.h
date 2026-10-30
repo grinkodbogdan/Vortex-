@@ -8,10 +8,10 @@
 #define APPS_MAX 128
 
 enum app_kind { APP_KAIOS = 0, APP_BUILTIN_STORE, APP_BUILTIN_SETTINGS, APP_BUILTIN_SYSINFO,
-                APP_BUILTIN_DIALER, APP_BUILTIN_CALC };
+                APP_BUILTIN_DIALER, APP_BUILTIN_CALC, APP_BUILTIN_MESSAGES, APP_BUILTIN_TORCH };
 
 /* Built-in apps come first in the list, in this order. */
-#define APPS_BUILTIN 5
+#define APPS_BUILTIN 7
 
 struct vx_app {
     enum app_kind kind;

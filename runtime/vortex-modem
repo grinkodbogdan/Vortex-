@@ -1,0 +1,340 @@
+#!/usr/bin/python3
+# Calls and SMS through ModemManager (D-Bus), for the Vortex shell.
+#
+#   vortex-modem watch                  the "modem" service: enables the
+#                                       modem, rings, routes call audio,
+#                                       stores incoming SMS
+#   vortex-modem status                 "state<TAB>operator<TAB>signal%"
+#   vortex-modem dial NUMBER
+#   vortex-modem answer | hangup
+#   vortex-modem speaker on|off         during a call
+#   vortex-modem sms-send NUMBER TEXT
+#
+# Runs as root (the shell reaches it through doas).  Files for the shell:
+#   /run/vortex/modem        state<TAB>operator<TAB>signal%
+#   /run/vortex/call         state<TAB>number<TAB>direction<TAB>since (epoch)
+#                            empty when there is no call
+#   /run/vortex/sms-new      touched when a message arrives
+#   /var/lib/vortex/sms/messages.tsv
+#                            epoch<TAB>in|out<TAB>number<TAB>ok|failed<TAB>text
+#                            (text with \\, \t and \n escaped)
+import math
+import os
+import struct
+import subprocess
+import sys
+import time
+import wave
+
+from gi.repository import Gio, GLib
+
+MM = "org.freedesktop.ModemManager1"
+RUN = "/run/vortex"
+SMS_DIR = "/var/lib/vortex/sms"
+STORE = SMS_DIR + "/messages.tsv"
+RING = RUN + "/ring.wav"
+
+CALL_STATES = {0: "unknown", 1: "dialing", 2: "ringing-out", 3: "ringing-in", 4: "active",
+               5: "held", 6: "waiting", 7: "terminated"}
+MODEM_STATES = {-1: "failed", 0: "unknown", 1: "initializing", 2: "locked", 3: "disabled",
+                4: "disabling", 5: "enabling", 6: "enabled", 7: "searching", 8: "registered",
+                9: "disconnecting", 10: "connecting", 11: "connected"}
+
+bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+
+
+def log(*a):
+    print("vortex-modem:", *a, file=sys.stderr, flush=True)
+
+
+def proxy(path, iface):
+    return Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, MM, path, iface, None)
+
+
+def prop(p, name, default=None):
+    v = p.get_cached_property(name)
+    return v.unpack() if v is not None else default
+
+
+def modem_path():
+    om = proxy("/org/freedesktop/ModemManager1", "org.freedesktop.DBus.ObjectManager")
+    objs = om.call_sync("GetManagedObjects", None, Gio.DBusCallFlags.NONE, 10000, None).unpack()[0]
+    for path in sorted(objs):
+        if MM + ".Modem" in objs[path]:
+            return path
+    return None
+
+
+def need_modem():
+    path = modem_path()
+    if not path:
+        sys.exit("vortex-modem: no modem (is ModemManager running?)")
+    return path
+
+
+def call(p, method, args=None, timeout=30000):
+    return p.call_sync(method, args, Gio.DBusCallFlags.NONE, timeout, None)
+
+
+def write_file(path, text):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def esc(text):
+    return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
+
+
+def store(direction, number, status, text, when=None):
+    os.makedirs(SMS_DIR, exist_ok=True)
+    with open(STORE, "a") as f:
+        f.write("%d\t%s\t%s\t%s\t%s\n" % (when or time.time(), direction, number, status, esc(text)))
+    os.chmod(STORE, 0o644)
+
+
+def status_line(path):
+    m = proxy(path, MM + ".Modem")
+    g = proxy(path, MM + ".Modem.Modem3gpp")
+    state = MODEM_STATES.get(prop(m, "State", 0), "unknown")
+    signal = (prop(m, "SignalQuality", (0, False)) or (0, False))[0]
+    operator = prop(g, "OperatorName", "") or ""
+    return "%s\t%s\t%d\n" % (state, operator, signal)
+
+
+# ---- commands ---------------------------------------------------------------
+
+def calls(path):
+    v = proxy(path, MM + ".Modem.Voice")
+    return [proxy(c, MM + ".Call") for c in call(v, "ListCalls").unpack()[0]]
+
+
+def cmd_dial(number):
+    if not number or any(ch not in "0123456789+*#" for ch in number):
+        sys.exit("vortex-modem: bad number")
+    v = proxy(need_modem(), MM + ".Modem.Voice")
+    c = call(v, "CreateCall", GLib.Variant("(a{sv})", ({"number": GLib.Variant("s", number)},))).unpack()[0]
+    call(proxy(c, MM + ".Call"), "Start")
+
+
+def cmd_answer():
+    for c in calls(need_modem()):
+        if prop(c, "State") == 3:
+            call(c, "Accept")
+            return
+    sys.exit("vortex-modem: no incoming call")
+
+
+def cmd_hangup():
+    call(proxy(need_modem(), MM + ".Modem.Voice"), "HangupAll")
+
+
+def cmd_sms_send(number, text):
+    if not number or any(ch not in "0123456789+" for ch in number):
+        sys.exit("vortex-modem: bad number")
+    msg = proxy(need_modem(), MM + ".Modem.Messaging")
+    path = call(msg, "Create", GLib.Variant("(a{sv})", ({
+        "number": GLib.Variant("s", number), "text": GLib.Variant("s", text)},))).unpack()[0]
+    try:
+        call(proxy(path, MM + ".Sms"), "Send", timeout=60000)
+        store("out", number, "ok", text)
+    except GLib.Error as e:
+        store("out", number, "failed", text)
+        sys.exit("vortex-modem: sending failed: %s" % e.message)
+    finally:
+        try:
+            call(msg, "Delete", GLib.Variant("(o)", (path,)))
+        except GLib.Error:
+            pass
+
+
+# ---- the watcher --------------------------------------------------------------
+
+def make_ringtone():
+    """A soft two-tone ring, 1 s of sound and 1.5 s of quiet."""
+    rate = 16000
+    frames = bytearray()
+    for i in range(int(rate * 2.5)):
+        t = i / rate
+        on = (t % 0.5) < 0.4 and t < 1.0
+        v = 0.0
+        if on:
+            env = min(1.0, (t % 0.5) / 0.02, (0.4 - t % 0.5) / 0.05)
+            v = 0.35 * env * (math.sin(2 * math.pi * 880 * t) + 0.6 * math.sin(2 * math.pi * 1320 * t))
+        frames += struct.pack("<h", int(max(-1, min(1, v)) * 32767))
+    with wave.open(RING, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(frames))
+
+
+class Watcher:
+    def __init__(self):
+        self.modem = None
+        self.ringer = None
+        self.voice = None
+        self.call_state = None
+
+    def run(self):
+        os.makedirs(RUN, exist_ok=True)
+        try:
+            make_ringtone()
+        except OSError as e:
+            log("no ringtone:", e)
+        write_file(RUN + "/call", "")
+        write_file(RUN + "/modem", "none\t\t0\n")
+        bus.signal_subscribe(MM, None, None, None, None, Gio.DBusSignalFlags.NONE, self.on_signal)
+        GLib.timeout_add_seconds(3, self.tick)
+        self.tick()
+        GLib.MainLoop().run()
+
+    def on_signal(self, _conn, _sender, path, iface, name, params):
+        if name in ("CallAdded", "CallDeleted", "StateChanged") or iface == MM + ".Call":
+            GLib.idle_add(self.check_calls)
+        if name == "Added" and iface == MM + ".Modem.Messaging":
+            sms_path, received = params.unpack()
+            if received:
+                GLib.timeout_add(1500, self.import_sms, sms_path)
+
+    def tick(self):
+        try:
+            path = modem_path()
+        except GLib.Error:
+            path = None
+        if path != self.modem:
+            self.modem = path
+            log("modem:", path or "none")
+            if path:
+                self.enable()
+                self.import_all()
+        if path:
+            try:
+                write_file(RUN + "/modem", status_line(path))
+            except GLib.Error:
+                pass
+            self.check_calls()
+        else:
+            write_file(RUN + "/modem", "none\t\t0\n")
+        return True
+
+    def enable(self):
+        m = proxy(self.modem, MM + ".Modem")
+        if prop(m, "State", 0) in (3, 0):
+            try:
+                call(m, "Enable", GLib.Variant("(b)", (True,)), timeout=60000)
+                log("modem enabled")
+            except GLib.Error as e:
+                log("cannot enable the modem:", e.message)
+
+    # calls
+    def check_calls(self):
+        if not self.modem:
+            return False
+        try:
+            current = [c for c in calls(self.modem) if prop(c, "State") != 7]
+        except GLib.Error:
+            current = []
+        if current:
+            c = current[0]
+            state = CALL_STATES.get(prop(c, "State", 0), "unknown")
+            number = prop(c, "Number", "") or ""
+            direction = "in" if prop(c, "Direction") == 1 else "out"
+            if state != self.call_state:
+                log("call", direction, number, state)
+                write_file(RUN + "/call", "%s\t%s\t%s\t%d\n" % (state, number, direction, time.time()))
+            self.call_state = state
+        else:
+            if self.call_state:
+                log("call ended")
+                write_file(RUN + "/call", "")
+            self.call_state = None
+        self.ring(self.call_state == "ringing-in")
+        self.audio(self.call_state in ("active", "dialing", "ringing-out", "held"))
+        return False
+
+    def ring(self, on):
+        if on and not self.ringer:
+            self.ringer = subprocess.Popen(
+                ["sh", "-c", "while :; do vortex-vibrate 800 & aplay -q '%s'; sleep 0.2; done" % RING],
+                start_new_session=True)
+        elif not on and self.ringer:
+            try:
+                os.killpg(self.ringer.pid, 15)  # the loop, aplay and vortex-vibrate
+            except OSError:
+                pass
+            self.ringer.wait()
+            self.ringer = None
+
+    def audio(self, on):
+        if on and not self.voice:
+            subprocess.run(["vortex-audio", "call", "on"], check=False)
+            self.voice = subprocess.Popen(["vortex-voice"])
+        elif not on and self.voice:
+            self.voice.terminate()
+            self.voice.wait()
+            self.voice = None
+            subprocess.run(["vortex-audio", "call", "off"], check=False)
+
+    # SMS
+    def import_all(self):
+        try:
+            for path in call(proxy(self.modem, MM + ".Modem.Messaging"), "List").unpack()[0]:
+                self.import_sms(path)
+        except GLib.Error:
+            pass
+
+    def import_sms(self, path):
+        try:
+            s = proxy(path, MM + ".Sms")
+            if prop(s, "State") != 3:  # not (completely) received yet
+                return False
+            number, text = prop(s, "Number", ""), prop(s, "Text", "")
+            when = time.time()
+            stamp = prop(s, "Timestamp", "")
+            try:
+                when = GLib.DateTime.new_from_iso8601(stamp, None).to_unix()
+            except (TypeError, AttributeError):
+                pass
+            store("in", number, "ok", text, when)
+            call(proxy(self.modem, MM + ".Modem.Messaging"), "Delete", GLib.Variant("(o)", (path,)))
+            log("message from", number)
+            open(RUN + "/sms-new", "w").close()
+            os.chmod(RUN + "/sms-new", 0o644)
+            if not self.call_state:
+                subprocess.Popen(["sh", "-c", "vortex-vibrate 150 100 150 & aplay -q -d 1 '%s'" % RING])
+        except GLib.Error as e:
+            log("cannot read message %s: %s" % (path, e.message))
+        return False
+
+
+def main():
+    a = sys.argv[1:]
+    cmd = a[0] if a else ""
+    try:
+        if cmd == "watch":
+            Watcher().run()
+        elif cmd == "status":
+            path = modem_path()
+            sys.stdout.write(status_line(path) if path else "none\t\t0\n")
+        elif cmd == "dial" and len(a) == 2:
+            cmd_dial(a[1])
+        elif cmd == "answer":
+            cmd_answer()
+        elif cmd == "hangup":
+            cmd_hangup()
+        elif cmd == "speaker" and len(a) == 2 and a[1] in ("on", "off"):
+            subprocess.run(["vortex-audio", "call", "speaker" if a[1] == "on" else "earpiece"], check=False)
+        elif cmd == "sms-send" and len(a) == 3:
+            cmd_sms_send(a[1], a[2])
+        else:
+            sys.exit("usage: vortex-modem watch|status|dial NUMBER|answer|hangup|"
+                     "speaker on|off|sms-send NUMBER TEXT")
+    except GLib.Error as e:
+        sys.exit("vortex-modem: %s" % e.message)
+
+
+if __name__ == "__main__":
+    main()

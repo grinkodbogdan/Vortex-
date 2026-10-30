@@ -43,6 +43,11 @@ static const struct {
 };
 
 static struct nk_command_buffer *cv;
+
+/* defined further down */
+static void messages_load(void);
+static void torch_toggle(void);
+static int move(int *sel, int n, int delta);
 static struct shell *S;
 
 /* ---- drawing helpers ------------------------------------------------- */
@@ -213,9 +218,18 @@ static void status_bar(void)
     fill_a(nk_rect(0, 0, w, SB_H), 0, T.status, 225);
     fill(nk_rect(0, SB_H - 1, w, 1), 0, T.sep);
 
-    /* Wi-Fi signal bars */
-    for (int i = 0; i < 4; i++)
-        fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.net_up ? T.cyan : 0x2a3444);
+    /* mobile signal bars when there is a modem, Wi-Fi otherwise */
+    if (S->modem_seen && strcmp(S->modem_state, "none")) {
+        int bars = S->modem_signal >= 70 ? 4 : S->modem_signal >= 45 ? 3 : S->modem_signal >= 20 ? 2 :
+                   S->modem_signal > 0 ? 1 : 0;
+        for (int i = 0; i < 4; i++)
+            fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, i < bars ? T.cyan : 0x2a3444);
+    } else {
+        for (int i = 0; i < 4; i++)
+            fill(nk_rect(5 + i * 4, 14 - i * 3, 3, 3 + i * 3), 0, S->sys.net_up ? T.cyan : 0x2a3444);
+    }
+    if (S->msg_unread)
+        fill(nk_rect(24, 6, 9, 7), 1, T.accent); /* unread messages */
     if (S->job != JOB_NONE || S->store.fetch_pid > 0)
         arrow(31, SB_H / 2.f, 'v', T.cyan); /* download activity */
 
@@ -459,6 +473,14 @@ static void launch_app(int idx)
         return;
     case APP_BUILTIN_CALC:
         push(SCR_CALC);
+        return;
+    case APP_BUILTIN_MESSAGES:
+        messages_load();
+        S->conv_sel = S->conv_top = 0;
+        push(SCR_MESSAGES);
+        return;
+    case APP_BUILTIN_TORCH:
+        torch_toggle();
         return;
     case APP_KAIOS:
         break;
@@ -929,6 +951,30 @@ static void icon_calc(void)
                          C(r == 2 && c == 2 ? 0xf2994a : tile));
 }
 
+static void icon_messages(void)
+{
+    const uint32_t tile = 0x2f80d1;
+    icon_tile(tile);
+    /* speech bubble with three dots */
+    nk_fill_rect(cv, nk_rect(GX(4), GY(5), GS(16), GS(11.5f)), GS(3), C(0xffffff));
+    nk_fill_triangle(cv, GX(7), GY(15), GX(12), GY(15), GX(6.5f), GY(19.5f), C(0xffffff));
+    for (int i = 0; i < 3; i++)
+        ic_circle(8.5f + i * 3.5f, 10.8f, 1.1f, tile);
+}
+
+static void icon_torch(void)
+{
+    const uint32_t tile = 0xd9a227;
+    icon_tile(tile);
+    /* torch head, body and beam */
+    nk_fill_rect(cv, nk_rect(GX(9.5f), GY(11), GS(5), GS(9.5f)), GS(1.2f), C(0xffffff));
+    nk_fill_triangle(cv, GX(7), GY(8), GX(17), GY(8), GX(14.5f), GY(11.5f), C(0xffffff));
+    nk_fill_triangle(cv, GX(7), GY(8), GX(14.5f), GY(11.5f), GX(9.5f), GY(11.5f), C(0xffffff));
+    nk_fill_rect(cv, nk_rect(GX(11.2f), GY(13.5f), GS(1.6f), GS(2.5f)), 0, C(tile));
+    for (int i = -1; i <= 1; i++)
+        nk_stroke_line(cv, GX(12 + i * 3.2f), GY(6.2f), GX(12 + i * 4.6f), GY(3.2f), GS(1.2f), C(0xfff3c4));
+}
+
 /* Returns 0 if `kind` has no built-in icon. */
 static int builtin_icon(enum app_kind kind, struct nk_rect r)
 {
@@ -941,6 +987,8 @@ static int builtin_icon(enum app_kind kind, struct nk_rect r)
     case APP_BUILTIN_SETTINGS: icon_settings(); return 1;
     case APP_BUILTIN_SYSINFO: icon_system(); return 1;
     case APP_BUILTIN_CALC: icon_calc(); return 1;
+    case APP_BUILTIN_MESSAGES: icon_messages(); return 1;
+    case APP_BUILTIN_TORCH: icon_torch(); return 1;
     default: return 0;
     }
 }
@@ -1426,17 +1474,454 @@ static void draw_calc(void)
     softkeys("Clear", "=", "Back");
 }
 
+/* ---- phone: calls and messages ---------------------------------------
+ * vortex-modem (a root service) talks to ModemManager and leaves its state
+ * in files; the shell polls them and acts through cfg.call_cmd
+ * (vortex-call: dial, answer, hangup, speaker, sms).  VORTEX_RUN_DIR and
+ * VORTEX_SMS_DIR move the files (tests). */
+
+static const char *run_dir(void)
+{
+    const char *d = getenv("VORTEX_RUN_DIR");
+    return d ? d : "/run/vortex";
+}
+
+static const char *sms_dir(void)
+{
+    const char *d = getenv("VORTEX_SMS_DIR");
+    return d ? d : "/var/lib/vortex/sms";
+}
+
+/* Reads a one-line tab-separated file into up to n fields. */
+static int read_fields(const char *name, char *line, size_t size, char **f, int n)
+{
+    char path[300];
+    FILE *fp;
+    int got = 0;
+    snprintf(path, sizeof(path), "%s/%s", run_dir(), name);
+    fp = fopen(path, "r");
+    if (!fp)
+        return -1;
+    if (!fgets(line, (int)size, fp))
+        line[0] = '\0';
+    fclose(fp);
+    line[strcspn(line, "\n")] = '\0';
+    if (!line[0])
+        return 0;
+    for (char *p = line; got < n; got++) {
+        f[got] = p;
+        p = strchr(p, '\t');
+        if (!p) {
+            got++;
+            break;
+        }
+        *p++ = '\0';
+    }
+    return got;
+}
+
+static void unescape(char *s)
+{
+    char *o = s;
+    for (; *s; s++) {
+        if (*s == '\\' && s[1]) {
+            s++;
+            *o++ = *s == 'n' ? '\n' : *s == 't' ? '\t' : *s;
+        } else {
+            *o++ = *s;
+        }
+    }
+    *o = '\0';
+}
+
+static long seen_time(const char *number)
+{
+    char path[300], line[96];
+    long t = 0;
+    FILE *f;
+    snprintf(path, sizeof(path), "%s/seen", sms_dir());
+    f = fopen(path, "r");
+    if (!f)
+        return 0;
+    while (fgets(line, sizeof(line), f)) {
+        char *tab = strchr(line, '\t');
+        if (tab && (size_t)(tab - line) == strlen(number) && !strncmp(line, number, (size_t)(tab - line)))
+            t = atol(tab + 1);
+    }
+    fclose(f);
+    return t;
+}
+
+static void mark_seen(const char *number)
+{
+    char path[300];
+    FILE *f;
+    snprintf(path, sizeof(path), "%s/seen", sms_dir());
+    f = fopen(path, "a");  /* the last line for a number wins */
+    if (f) {
+        fprintf(f, "%s\t%ld\n", number, (long)time(NULL));
+        fclose(f);
+    }
+}
+
+/* Load the newest MSG_MAX messages and group them by number, newest first. */
+static void messages_load(void)
+{
+    char path[300], line[512];
+    FILE *f;
+    snprintf(path, sizeof(path), "%s/messages.tsv", sms_dir());
+    S->msg_n = S->conv_n = S->msg_unread = 0;
+    f = fopen(path, "r");
+    if (!f)
+        return;
+    while (fgets(line, sizeof(line), f)) {
+        char *fld[5], *p = line;
+        int n = 0;
+        struct sms *m;
+        line[strcspn(line, "\n")] = '\0';
+        while (n < 5 && p) {
+            fld[n++] = p;
+            p = n < 5 ? strchr(p, '\t') : NULL;
+            if (p)
+                *p++ = '\0';
+        }
+        if (n < 5)
+            continue;
+        if (S->msg_n == MSG_MAX) {  /* keep the newest */
+            memmove(S->msgs, S->msgs + 1, sizeof(S->msgs[0]) * (MSG_MAX - 1));
+            S->msg_n--;
+        }
+        m = &S->msgs[S->msg_n++];
+        m->t = atol(fld[0]);
+        m->out = !strcmp(fld[1], "out");
+        m->failed = !strcmp(fld[3], "failed");
+        vx_strlcpy(m->number, fld[2], sizeof(m->number));
+        vx_strlcpy(m->text, fld[4], sizeof(m->text));
+        unescape(m->text);
+    }
+    fclose(f);
+    for (int i = S->msg_n - 1; i >= 0; i--) {
+        struct sms *m = &S->msgs[i];
+        int c = 0;
+        while (c < S->conv_n && strcmp(S->conv[c].number, m->number))
+            c++;
+        if (c == S->conv_n) {
+            if (S->conv_n == CONV_MAX)
+                continue;
+            vx_strlcpy(S->conv[c].number, m->number, sizeof(S->conv[c].number));
+            S->conv[c].last = i;
+            S->conv[c].unread = 0;
+            S->conv_n++;
+        }
+        if (!m->out && m->t > seen_time(m->number)) {
+            S->conv[c].unread++;
+            S->msg_unread++;
+        }
+    }
+    /* newest conversation first, by the time of its last message */
+    for (int i = 1; i < S->conv_n; i++)
+        for (int j = i; j > 0 && S->msgs[S->conv[j].last].t > S->msgs[S->conv[j - 1].last].t; j--) {
+            struct { char number[24]; int last, unread; } tmp;
+            memcpy(&tmp, &S->conv[j], sizeof(tmp));
+            memcpy(&S->conv[j], &S->conv[j - 1], sizeof(tmp));
+            memcpy(&S->conv[j - 1], &tmp, sizeof(tmp));
+        }
+    if (S->conv_sel >= S->conv_n)
+        S->conv_sel = S->conv_n ? S->conv_n - 1 : 0;
+}
+
+static void open_thread(const char *number)
+{
+    vx_strlcpy(S->thread_number, number, sizeof(S->thread_number));
+    S->thread_scroll = 0;
+    mark_seen(number);
+    messages_load();
+    push(SCR_THREAD);
+}
+
+static void compose(void)
+{
+    t9_reset(&S->t9);
+    S->input = INPUT_SMS;
+    push(SCR_INPUT);
+}
+
+static void send_sms(void)
+{
+    char *argv[] = { S->cfg.call_cmd, "sms", S->thread_number, S->t9.text, NULL };
+    if (!S->t9.text[0])
+        return;
+    start_job(JOB_SMS, "Sending\xe2\x80\xa6", argv);
+}
+
+static void call_cmd(const char *what, const char *arg)
+{
+    char *argv[] = { S->cfg.call_cmd, (char *)what, (char *)arg, NULL };
+    spawn_detached(argv);
+}
+
+/* Follow vortex-modem's files: status bar, the call screen, new messages. */
+static void modem_poll(void)
+{
+    char line[160], *f[4];
+    int n;
+    struct stat st;
+    char path[300];
+
+    if (S->modem_seen && S->now - S->modem_polled < 700)
+        return;
+    S->modem_polled = S->now;
+
+    n = read_fields("modem", line, sizeof(line), f, 3);
+    if (n >= 1) {
+        S->modem_seen = 1;
+        vx_strlcpy(S->modem_state, f[0], sizeof(S->modem_state));
+        vx_strlcpy(S->modem_op, n >= 2 ? f[1] : "", sizeof(S->modem_op));
+        S->modem_signal = n >= 3 ? atoi(f[2]) : 0;
+    }
+
+    n = read_fields("call", line, sizeof(line), f, 4);
+    if (n >= 4) {
+        int was = S->call_state[0] != '\0';
+        vx_strlcpy(S->call_state, f[0], sizeof(S->call_state));
+        vx_strlcpy(S->call_number, f[1], sizeof(S->call_number));
+        S->call_incoming = !strcmp(f[2], "in");
+        S->call_since = atol(f[3]);
+        S->call_active = 1;
+        if (!was || top() != SCR_CALL) {
+            /* a call takes the screen, even from a web app */
+            if (S->app_pid) {
+                S->app_closing = 1;
+                proc_kill_group(S->app_pid, 1500);
+            }
+            if (S->blanked) {
+                S->blanked = 0;
+                plat_set_blank(0);
+            }
+            if (top() != SCR_CALL)
+                push(SCR_CALL);
+            S->force_redraw = 1;
+        }
+    } else if (n == 0 && S->call_state[0]) {
+        S->call_state[0] = '\0';
+        S->call_active = 0;
+        S->call_speaker = 0;
+        if (top() == SCR_CALL)
+            pop();
+        toast("Call ended");
+        S->force_redraw = 1;
+    }
+
+    snprintf(path, sizeof(path), "%s/sms-new", run_dir());
+    if (stat(path, &st) == 0 && (long)st.st_mtime != S->sms_new_mtime) {
+        int first = S->sms_new_mtime == 0;
+        S->sms_new_mtime = (long)st.st_mtime;
+        messages_load();
+        if (!first && S->msg_n) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Message from %s", S->msgs[S->msg_n - 1].number);
+            toast(msg);
+        }
+        S->force_redraw = 1;
+    }
+}
+
+static void torch_toggle(void)
+{
+    static const char *const leds[] = { "/sys/class/leds/white:torch/brightness",
+                                        "/sys/class/leds/torch/brightness",
+                                        "/sys/class/leds/white:flash/brightness" };
+    for (size_t i = 0; i < VX_ARRAY_LEN(leds); i++) {
+        long v = 0;
+        FILE *f;
+        if (vx_read_int(leds[i], &v) != 0)
+            continue;
+        f = fopen(leds[i], "w");
+        if (!f) {
+            toast("Torch: no permission");
+            return;
+        }
+        fprintf(f, "%d\n", v ? 0 : 255);
+        fclose(f);
+        toast(v ? "Torch off" : "Torch on");
+        return;
+    }
+    toast("No torch on this phone");
+}
+
+static void draw_call(void)
+{
+    struct nk_rect area = content_rect(0);
+    const char *what = "Call";
+    char dur[16] = "";
+    int ringing = !strcmp(S->call_state, "ringing-in");
+
+    if (ringing)
+        what = "Incoming call";
+    else if (!strcmp(S->call_state, "dialing") || !strcmp(S->call_state, "ringing-out"))
+        what = "Calling\xe2\x80\xa6";
+    else if (!strcmp(S->call_state, "active")) {
+        long d = (long)time(NULL) - S->call_since;
+        what = S->call_speaker ? "Speaker on" : "In call";
+        snprintf(dur, sizeof(dur), "%02ld:%02ld", d / 60, d % 60);
+    } else if (!strcmp(S->call_state, "held"))
+        what = "On hold";
+    header("Phone", NULL);
+    label(nk_rect(0, area.y + 50, area.w, 20), what, S->fonts.normal, ringing ? T.accent : T.dim, AL_CENTER);
+    label(nk_rect(0, area.y + 80, area.w, S->fonts.large->handle.height + 8),
+          S->call_number[0] ? S->call_number : "Unknown", S->fonts.large, T.text, AL_CENTER);
+    if (dur[0])
+        label(nk_rect(0, area.y + 130, area.w, 20), dur, S->fonts.normal, T.text, AL_CENTER);
+    if (ringing)
+        softkeys("Answer", NULL, "Reject");
+    else
+        softkeys(!strcmp(S->call_state, "active") ? (S->call_speaker ? "Earpiece" : "Speaker") : NULL,
+                 NULL, "End");
+}
+
+static void key_call(enum vx_key k)
+{
+    int ringing = !strcmp(S->call_state, "ringing-in");
+    if (ringing && (k == VK_CALL || k == VK_OK || k == VK_SOFT_LEFT)) {
+        call_cmd("answer", NULL);
+    } else if (k == VK_SOFT_RIGHT || k == VK_BACK) {
+        call_cmd("hangup", NULL);
+    } else if (k == VK_SOFT_LEFT && !strcmp(S->call_state, "active")) {
+        S->call_speaker = !S->call_speaker;
+        call_cmd("speaker", S->call_speaker ? "on" : "off");
+    }
+}
+
+static void draw_messages(void)
+{
+    struct nk_rect area = content_rect(1);
+    int rows = (int)(area.h / ROW2_H);
+    header("Messages", S->msg_unread ? "new" : NULL);
+    if (!S->conv_n) {
+        label(nk_rect(0, area.y + 40, area.w, 24), "No messages", S->fonts.normal, T.dim, AL_CENTER);
+        softkeys("New", NULL, "Back");
+        return;
+    }
+    keep_visible(S->conv_sel, &S->conv_top, rows, S->conv_n);
+    for (int r = 0; r < rows && S->conv_top + r < S->conv_n; r++) {
+        int i = S->conv_top + r;
+        const struct sms *m = &S->msgs[S->conv[i].last];
+        char preview[48], badge[8] = "";
+        snprintf(preview, sizeof(preview), "%s%s", m->out ? "You: " : "", m->text);
+        preview[strcspn(preview, "\n")] = '\0';
+        if (S->conv[i].unread)
+            snprintf(badge, sizeof(badge), "%d new", S->conv[i].unread);
+        list_row(nk_rect(area.x, area.y + r * ROW2_H, area.w, ROW2_H), i == S->conv_sel,
+                 S->conv[i].number, preview, badge[0] ? badge : NULL, T.accent);
+    }
+    softkeys("New", "Open", "Back");
+}
+
+static void key_messages(enum vx_key k)
+{
+    switch (k) {
+    case VK_UP: move(&S->conv_sel, S->conv_n, -1); break;
+    case VK_DOWN: move(&S->conv_sel, S->conv_n, 1); break;
+    case VK_OK:
+        if (S->conv_n)
+            open_thread(S->conv[S->conv_sel].number);
+        break;
+    case VK_SOFT_LEFT:
+        t9_reset(&S->t9);
+        S->t9.mode = T9_DIGITS;
+        S->input = INPUT_SMS_NUMBER;
+        push(SCR_INPUT);
+        break;
+    case VK_CALL:
+        if (S->conv_n) {
+            vx_strlcpy(S->dial, S->conv[S->conv_sel].number, sizeof(S->dial));
+            dial();
+        }
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
+/* Thread: bubbles, newest at the bottom; scrolling moves up the history. */
+static void draw_thread(void)
+{
+    struct nk_rect area = content_rect(1);
+    const struct nk_font *f = S->fonts.normal;
+    float lh = f->handle.height + 2, y = area.y + area.h - 4, maxw = area.w - 60;
+    int skip = S->thread_scroll, shown = 0;
+
+    header(S->thread_number, NULL);
+    nk_push_scissor(cv, area);
+    for (int i = S->msg_n - 1; i >= 0 && y > area.y; i--) {
+        const struct sms *m = &S->msgs[i];
+        struct wrapdraw wd;
+        float h, bw = 0, x;
+        int lines;
+        if (strcmp(m->number, S->thread_number))
+            continue;
+        if (skip > 0) {
+            skip--;
+            continue;
+        }
+        lines = wrap(f, m->text, maxw, NULL, NULL);
+        h = lines * lh + 8;
+        for (const char *p = m->text; *p;) {  /* bubble width: the widest line */
+            size_t len = strcspn(p, "\n");
+            float w = text_w(f, p, (int)len);
+            bw = w > bw ? w : bw;
+            p += len + (p[len] == '\n');
+        }
+        bw = (bw > maxw ? maxw : bw) + 14;
+        y -= h + 6;
+        x = m->out ? area.w - bw - 6 : 6;
+        fill_a(nk_rect(x, y, bw, h), 8, m->out ? T.accent : 0x22324a, m->out ? 200 : 230);
+        wd = (struct wrapdraw){ x + 7, y + 4, lh, 0, lines - 1, m->failed ? T.warn : T.text };
+        wrap(f, m->text, maxw, draw_wrapped_line, &wd);
+        shown++;
+    }
+    nk_push_scissor(cv, nk_rect(0, 0, S->surf->w, S->surf->h));
+    if (!shown)
+        label(nk_rect(0, area.y + 40, area.w, 24), "No messages yet", f, T.dim, AL_CENTER);
+    softkeys("Reply", "Call", "Back");
+}
+
+static void key_thread(enum vx_key k)
+{
+    switch (k) {
+    case VK_UP: S->thread_scroll++; break;
+    case VK_DOWN: if (S->thread_scroll) S->thread_scroll--; break;
+    case VK_SOFT_LEFT: compose(); break;
+    case VK_OK:
+    case VK_CALL:
+        vx_strlcpy(S->dial, S->thread_number, sizeof(S->dial));
+        dial();
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
 static void draw_input(void)
 {
     struct nk_rect area = content_rect(1);
     float fy = area.y + 30;
-    const char *title = S->input == INPUT_SEARCH ? "Search apps" : "Wi-Fi password";
+    const char *title = S->input == INPUT_SEARCH ? "Search apps" :
+                        S->input == INPUT_SMS ? "Message" :
+                        S->input == INPUT_SMS_NUMBER ? "To (number)" : "Wi-Fi password";
     char shown[80];
     int n;
 
     header(title, t9_mode_label(&S->t9));
     if (S->input == INPUT_WIFI_PSK)
         label(nk_rect(10, area.y + 6, area.w - 20, 20), S->wifi_target, S->fonts.small, T.dim, AL_LEFT);
+    if (S->input == INPUT_SMS) {
+        char left[32];
+        snprintf(left, sizeof(left), "to %s \xc2\xb7 %d left", S->thread_number, 160 - S->t9.len);
+        label(nk_rect(10, area.y + 6, area.w - 20, 20), left, S->fonts.small, T.dim, AL_LEFT);
+    }
     fill_a(nk_rect(8, fy, area.w - 16, 34), 6, 0x050a12, 230);
     nk_stroke_rect(cv, nk_rect(8, fy, area.w - 16, 34), 6, 1, C(T.accent));
     snprintf(shown, sizeof(shown), "%s|", S->t9.text);
@@ -1490,6 +1975,9 @@ static void draw_screen(enum screen scr)
     case SCR_SETTINGS: draw_settings(); break;
     case SCR_WIFI: draw_wifi(); break;
     case SCR_BT: draw_bt(); break;
+    case SCR_CALL: draw_call(); break;
+    case SCR_MESSAGES: draw_messages(); break;
+    case SCR_THREAD: draw_thread(); break;
     case SCR_SYSINFO: draw_sysinfo(); break;
     case SCR_DIALER: draw_dialer(); break;
     case SCR_CALC: draw_calc(); break;
@@ -1753,6 +2241,15 @@ static void key_input(enum vx_key k)
             refilter();
             if (top() != SCR_STORE_LIST)
                 push(SCR_STORE_LIST);
+        } else if (S->input == INPUT_SMS) {
+            send_sms();
+        } else if (S->input == INPUT_SMS_NUMBER) {
+            if (S->t9.text[0]) {
+                char number[24];
+                vx_strlcpy(number, S->t9.text, sizeof(number));
+                open_thread(number);
+                compose();
+            }
         } else {
             wifi_connect(S->wifi_target, S->t9.text);
         }
@@ -1852,6 +2349,9 @@ int shell_key(struct shell *sh, const struct vx_event *ev)
     case SCR_SETTINGS: key_settings(ev->key); break;
     case SCR_WIFI: key_wifi(ev->key); break;
     case SCR_BT: key_bt(ev->key); break;
+    case SCR_CALL: key_call(ev->key); break;
+    case SCR_MESSAGES: key_messages(ev->key); break;
+    case SCR_THREAD: key_thread(ev->key); break;
     case SCR_SYSINFO:
         if (ev->key == VK_BACK || ev->key == VK_SOFT_RIGHT)
             pop();
@@ -1922,6 +2422,10 @@ static void job_done(int code)
         if (code == 0 && !S->bt_paired[S->bt_sel])
             bt_scan();  /* show it as paired */
         break;
+    case JOB_SMS:
+        messages_load();
+        toast(code == 0 ? "Sent" : "Not sent");
+        break;
     case JOB_CALL:
         if (code != 0) {
             S->call_active = 0;
@@ -1940,6 +2444,15 @@ int shell_tick(struct shell *sh)
     time_t t = time(NULL);
 
     S = sh;
+    /* first: an incoming call must be noticed even while a web app runs */
+    modem_poll();
+    if (sh->call_state[0] && !strcmp(sh->call_state, "active")) {
+        static long last_sec;
+        if ((long)t != last_sec) {  /* the call timer */
+            last_sec = (long)t;
+            dirty = 1;
+        }
+    }
     if (sh->app_pid) {
         if (proc_poll(sh->app_pid, &code) != 0) {
             sh->app_pid = 0;
@@ -2019,6 +2532,8 @@ int shell_timeout(const struct shell *sh)
     long ms_to_minute;
     if (sh->app_pid)
         return 250;
+    if (sh->call_state[0])
+        return 500;
     if (sh->job != JOB_NONE || sh->store.fetch_pid > 0)
         return 120;
     if (sh->stack[sh->depth - 1] == SCR_STORE && sh->store.state == STORE_ERROR)
@@ -2030,6 +2545,8 @@ int shell_timeout(const struct shell *sh)
     if (sh->blanked)
         return 60000;
     ms_to_minute = 60000 - (long)(time(NULL) % 60) * 1000;
+    if (sh->modem_seen && ms_to_minute > 1000)
+        ms_to_minute = 1000;  /* notice incoming calls and messages */
     if (sh->cfg.screen_timeout > 0) {
         long blank_in = sh->cfg.screen_timeout * 1000L - (sh->now - sh->last_input);
         if (blank_in < ms_to_minute)
