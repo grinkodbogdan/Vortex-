@@ -9,6 +9,7 @@
 #include "ui.h"
 #include "proc.h"
 
+#include <dirent.h>
 #include <malloc.h>
 #include <math.h>
 #include <stdio.h>
@@ -1726,27 +1727,58 @@ static void modem_poll(void)
     }
 }
 
+/* Every LED whose name has "torch" in it is switched together: on the
+ * 6300 4G the torch needs two GPIOs high at once (see the device tree). */
 static void torch_toggle(void)
 {
-    static const char *const leds[] = { "/sys/class/leds/white:torch/brightness",
-                                        "/sys/class/leds/torch/brightness",
-                                        "/sys/class/leds/white:flash/brightness" };
-    for (size_t i = 0; i < VX_ARRAY_LEN(leds); i++) {
-        long v = 0;
-        FILE *f;
-        if (vx_read_int(leds[i], &v) != 0)
-            continue;
-        f = fopen(leds[i], "w");
-        if (!f) {
-            toast("Torch: no permission");
-            return;
-        }
-        fprintf(f, "%d\n", v ? 0 : 255);
-        fclose(f);
-        toast(v ? "Torch off" : "Torch on");
+    const char *base = getenv("VORTEX_LEDS_DIR");
+    char path[512];
+    DIR *d;
+    struct dirent *e;
+    int found = 0, on = -1, failed = 0;
+
+    if (!base)
+        base = "/sys/class/leds";
+    d = opendir(base);
+    if (!d) {
+        toast("No torch on this phone");
         return;
     }
-    toast("No torch on this phone");
+    /* Two passes: read the state from the first torch LED, then write all. */
+    for (int pass = 0; pass < 2; pass++) {
+        rewinddir(d);
+        while ((e = readdir(d))) {
+            long v = 0;
+            FILE *f;
+            if (!strstr(e->d_name, "torch") && !strstr(e->d_name, "flash"))
+                continue;
+            snprintf(path, sizeof(path), "%s/%s/brightness", base, e->d_name);
+            if (pass == 0) {
+                if (vx_read_int(path, &v) == 0) {
+                    found = 1;
+                    if (on < 0)
+                        on = v ? 0 : 1;
+                }
+                continue;
+            }
+            f = fopen(path, "w");
+            if (!f) {
+                failed = 1;
+                continue;
+            }
+            fprintf(f, "%d\n", on ? 255 : 0);
+            fclose(f);
+        }
+        if (!found)
+            break;
+    }
+    closedir(d);
+    if (!found)
+        toast("No torch on this phone");
+    else if (failed)
+        toast("Torch: no permission");
+    else
+        toast(on ? "Torch on" : "Torch off");
 }
 
 static void draw_call(void)

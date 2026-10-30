@@ -70,7 +70,16 @@ VORTEX_SMS_DIR=$OUT/sms VORTEX_RUN_DIR=$OUT/run-none run messages "ok right righ
 # an incoming call takes the screen; the status bar shows the mobile signal
 VORTEX_SMS_DIR=$OUT/sms VORTEX_RUN_DIR=$(pwd)/tests/fixtures/run-call run call "wait:300 shot:$OUT/call.ppm"
 # no torch LED on the test machine: says so
-run torch      "ok right right right right right right ok shot:$OUT/torch.ppm"
+VORTEX_LEDS_DIR=$OUT/no-leds run torch "ok right right right right right right ok shot:$OUT/torch.ppm"
+# the 6300 4G's torch is two LEDs (two GPIOs) switched together
+mkdir -p "$OUT/leds/white:torch" "$OUT/leds/white:torch-en" "$OUT/leds/red:status"
+for l in white:torch white:torch-en red:status; do echo 0 > "$OUT/leds/$l/brightness"; done
+VORTEX_LEDS_DIR=$OUT/leds run torch-on "ok right right right right right right ok shot:$OUT/torch-on.ppm"
+if [ "$(cat "$OUT/leds/white:torch/brightness" "$OUT/leds/white:torch-en/brightness" "$OUT/leds/red:status/brightness" | tr '\n' ' ')" = "255 255 0 " ]; then
+	echo "ok   torch-leds"
+else
+	echo "FAIL torch-leds"; fail=1
+fi
 
 # boot logo, mid-animation, with the first-boot message
 echo "Setting up Vortex (first boot only). This takes a few minutes..." > "$OUT/splash.msg"

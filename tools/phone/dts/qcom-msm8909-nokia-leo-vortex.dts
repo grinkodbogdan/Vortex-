@@ -31,14 +31,15 @@
 #include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include <dt-bindings/sound/qcom,q6voice.h>
-#include <dt-bindings/leds/common.h>
 
 / {
 	/*
-	 * Torch: Qualcomm's MSM8909 reference boards drive the camera flash
-	 * through a flash chip on gpio31 (FLASH_EN) and gpio32 (FLASH_NOW);
-	 * torch mode is FLASH_EN alone.  Assumed to be the same on the 6300 4G
-	 * (unverified; both pins are otherwise unused there).
+	 * Torch, as in Nokia's own leo kernel (LEO.dtsi includes
+	 * msm8909-camera-sensor-mtp.dtsi): the LED hangs off a BC847BS
+	 * transistor pair on gpio32 ("flash-en") and gpio31 ("flash-now"), and
+	 * torch-seq-val = <1 1>: it only lights with both pins high.  gpio-leds
+	 * drives one pin per LED, so the shell switches both together (every
+	 * /sys/class/leds/ *torch* entry).
 	 */
 	torch {
 		compatible = "gpio-leds";
@@ -46,9 +47,14 @@
 		pinctrl-names = "default";
 
 		led-torch {
-			function = LED_FUNCTION_TORCH;
-			color = <LED_COLOR_ID_WHITE>;
+			label = "white:torch";
 			gpios = <&tlmm 31 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led-torch-en {
+			label = "white:torch-en";
+			gpios = <&tlmm 32 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
 		};
 	};
@@ -301,19 +307,10 @@
 
 &tlmm {
 	torch_default: torch-default-state {
-		en-pins {
-			pins = "gpio31";
-			function = "gpio";
-			drive-strength = <2>;
-			bias-disable;
-		};
-		now-pins {
-			pins = "gpio32";
-			function = "gpio";
-			drive-strength = <2>;
-			bias-disable;
-			output-low;
-		};
+		pins = "gpio31", "gpio32";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
 	};
 
 	cdc_pdm_default: cdc-pdm-default-state {
