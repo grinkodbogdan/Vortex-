@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -d /var/log/audio ] || mkdir -p /var/log/audio
+printf 's16384\nn2\n' > /var/log/audio/config
+exec svlogd -tt /var/log/audio

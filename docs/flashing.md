@@ -92,6 +92,11 @@ dialer.
   network gets a root shell then). To turn adb off: `sv down adbd`.
 * **A KaiOS app does not open** ("App failed to start"): each launch logs to
   `/var/cache/vortex/logs/APP_ID.log` (the previous run is kept as `.old`).
+* **No sound:** the sound card ("msm8909") appears once the modem has started,
+  which can take a minute or two after boot. `cat /var/log/audio/current`
+  says whether the drivers loaded and the mixer was set, `aplay -l` lists the
+  card, and `speaker-test -c2 -twav -l1` plays a test. Audio is new in this
+  release (device tree in `tools/phone/dts/`).
 * **Wi-Fi does not come on:** Settings shows "No Wi-Fi hardware found" when
   the Wi-Fi chip did not start. `dmesg | grep -i -e wcn -e pronto -e firmware`
   shows why (the firmware comes from the phone's `modem` partition).

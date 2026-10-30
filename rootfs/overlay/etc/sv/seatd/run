@@ -1,0 +1,7 @@
+#!/bin/sh
+# Vortex: the panel is never a text console.  A VT-bound seat would switch
+# the VT back to text mode whenever a web app's compositor closes, and the
+# kernel console would flash over the shell before it redraws.
+exec 2>&1
+export SEATD_VTBOUND=0
+exec /usr/bin/seatd -g _seatd

@@ -246,9 +246,9 @@ void plat_set_blank(int blank)
 
 void plat_release_display(void)
 {
+    /* The VT stays in graphics mode: in text mode the kernel console would
+     * draw over the panel whenever the web app's compositor lets go of it. */
     P.released = 1;
-    if (P.tty_fd >= 0)
-        ioctl(P.tty_fd, KDSETMODE, KD_TEXT);
 }
 
 void plat_resume_display(void)

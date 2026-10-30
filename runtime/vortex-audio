@@ -1,0 +1,72 @@
+#!/bin/sh
+# Audio on the Nokia 6300 4G: QDSP6 in the modem firmware plus the codecs in
+# the SoC and PM8909 (see tools/phone/dts/qcom-msm8909-nokia-leo-vortex.dts).
+#
+#   vortex-audio setup      load the drivers, wait for the card, set the
+#                           mixer, and again whenever the card comes back
+#                           (modem restart); the "audio" service runs this
+#   vortex-audio mixer      set the mixer once
+#
+# The modem (and with it the sound card) can come up minutes after boot,
+# when udevd is no longer running to load modules, so load them here.
+set -u
+CARD=${VORTEX_AUDIO_CARD:-msm8909}
+MODULES="apr q6core q6afe q6afe-dai q6afe-clocks q6asm q6asm-dai q6adm q6routing
+	q6voice-common q6mvm q6cvs q6cvp q6voice-dai
+	snd-soc-msm8916-digital snd-soc-msm8916-analog snd-soc-apq8016-sbc"
+
+log() { echo "vortex-audio: $*"; }
+
+c() { # control value: set it, say so if the control is missing
+	amixer -q -c "$CARD" cset "name=$1" "$2" 2>/dev/null || log "mixer: cannot set '$1' to $2"
+}
+
+mixer() {
+	# DSP routing: media stream 1 and 3 to the codec, codec mic to stream 2
+	c 'PRI_MI2S_RX Audio Mixer MultiMedia1' 1
+	c 'PRI_MI2S_RX Audio Mixer MultiMedia3' 1
+	c 'MultiMedia2 Mixer TERT_MI2S_TX' 1
+	# speaker (RX3) and headphones (RX1/RX2), as ALSA's msm8916 profile
+	c 'RX1 MIX1 INP1' RX1
+	c 'RX2 MIX1 INP1' RX2
+	c 'RX3 MIX1 INP1' RX1
+	c 'RDAC2 MUX' RX2
+	c 'SPK DAC Switch' 1
+	c 'HPHL' 1
+	c 'HPHR' 1
+	for v in RX1 RX2 RX3; do
+		amixer -q -c "$CARD" sset "$v Digital" 0dB 2>/dev/null || log "mixer: cannot set $v Digital"
+	done
+	# main microphone
+	c 'DEC1 MUX' ADC1
+	c 'CIC1 MUX' AMIC
+	c 'ADC1 Volume' 8
+	log "mixer set"
+}
+
+case ${1:-} in
+setup)
+	for m in $MODULES; do
+		modprobe -q "$m" || log "cannot load $m"
+	done
+	while :; do
+		i=0
+		until [ -e "/proc/asound/$CARD" ]; do
+			[ $i -eq 30 ] && log "waiting for the sound card (it appears once the modem runs)"
+			i=$((i + 1))
+			sleep 2
+		done
+		log "sound card up: $(cat "/proc/asound/$CARD/id" 2>/dev/null)"
+		mixer
+		while [ -e "/proc/asound/$CARD" ]; do sleep 10; done
+		log "sound card gone (modem restart?)"
+	done
+	;;
+mixer)
+	mixer
+	;;
+*)
+	echo "usage: vortex-audio setup|mixer" >&2
+	exit 2
+	;;
+esac

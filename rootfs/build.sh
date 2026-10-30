@@ -98,7 +98,10 @@ KVER=${KMOD##*/}
 rm -rf "$K"
 mkdir -p "$K/dtbs"
 cp "$T/$KPKG/boot/vmlinuz" "$K/zImage"
-cp "$T/$KPKG/boot/dtbs/$DTB" "$K/dtbs/"
+# The 6300's device tree with audio added (tools/phone/dts), built from the
+# kernel's own source tag; the packaged one if that fails.
+"$TOP/tools/phone/build-dtb.sh" "$K/dtbs/$DTB" ||
+	{ msg "WARNING: no audio device tree, using the packaged one"; cp "$T/$KPKG/boot/dtbs/$DTB" "$K/dtbs/"; }
 cp "$T/$KPKG/boot/config" "$K/config"
 echo "$KVER" > "$K/kernel.release"
 cp "$LK2ND_IMG" "$K/lk2nd.img"
@@ -133,7 +136,7 @@ make -s -C "$TOP/adbd" CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
 install -Dm755 "$TOP/adbd/vortex-adbd" "$ROOT/usr/libexec/vortex/vortex-adbd"
 make -s -C "$TOP/adbd" clean
 
-for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync; do
+for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync vortex-audio; do
 	install -Dm755 "$TOP/runtime/$f" "$ROOT/usr/libexec/vortex/$f"
 done
 install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
@@ -184,7 +187,7 @@ EOF
 SV=$ROOT/etc/runit/runsvdir/default
 mkdir -p "$SV"
 rm -f "$SV"/agetty-*
-for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd; do
+for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd audio; do
 	[ -d "$ROOT/etc/sv/$s" ] && ln -sf "/etc/sv/$s" "$SV/$s"
 done
 # Wi-Fi starts off (vortex-wifi on brings it up): saves ~4 MB and battery.
