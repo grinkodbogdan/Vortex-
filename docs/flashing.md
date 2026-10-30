@@ -97,6 +97,10 @@ dialer.
   says whether the drivers loaded and the mixer was set, `aplay -l` lists the
   card, and `speaker-test -c2 -twav -l1` plays a test. Audio is new in this
   release (device tree in `tools/phone/dts/`).
+* **Bluetooth:** Settings → Bluetooth switches it, Bluetooth devices scans and
+  connects (OK on a device pairs and connects it). From a shell:
+  `vortex-radio bt on|off|status|scan|connect MAC|forget MAC`. Audio to
+  Bluetooth headphones is not routed yet.
 * **Wi-Fi does not come on:** Settings shows "No Wi-Fi hardware found" when
   the Wi-Fi chip did not start. `dmesg | grep -i -e wcn -e pronto -e firmware`
   shows why (the firmware comes from the phone's `modem` partition).

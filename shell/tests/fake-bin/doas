@@ -1,0 +1,8 @@
+#!/bin/sh
+# Test stand-in for doas + vortex-radio: answers the shell's Bluetooth calls.
+shift  # the helper's path
+case "$1 $2" in
+"bt scan") printf 'AA:BB:CC:DD:EE:01\tJBL Go 3\t0\n11:22:33:44:55:66\tNokia BH-105\t1\n' ;;
+"bt on" | "bt off" | "bt connect") exit 0 ;;
+*) exit 1 ;;
+esac

@@ -1,0 +1,119 @@
+#!/bin/sh
+# Wi-Fi and Bluetooth switches for the shell.  Runs as root: the shell
+# (user "vortex") may run only this through doas (see /etc/doas.conf), so
+# every argument is checked here.
+#
+#   vortex-radio wifi on|off            remembered across reboots
+#   vortex-radio bt on|off              remembered across reboots
+#   vortex-radio bt status              "on" or "off"
+#   vortex-radio bt scan [SECONDS]      "MAC<TAB>name<TAB>paired(0/1)" lines
+#   vortex-radio bt connect MAC         pair (if needed), trust, connect
+#   vortex-radio bt disconnect MAC
+#   vortex-radio bt forget MAC
+#
+# Bluetooth is the WCN3620's (btqcomsmd).  It comes up without an address,
+# so it gets a fixed one, derived once from the machine and kept in
+# /var/lib/vortex/bt-address.
+set -eu
+SV=/etc/sv
+ADDR_FILE=/var/lib/vortex/bt-address
+
+die() { echo "vortex-radio: $*" >&2; exit 1; }
+
+# Services stay off across reboots unless switched on (runit "down" file).
+svc_up() { for s; do rm -f "$SV/$s/down"; sv up "$s" >/dev/null 2>&1 || true; done; }
+svc_down() { for s; do touch "$SV/$s/down"; sv down "$s" >/dev/null 2>&1 || true; done; }
+
+mac() {
+	printf '%s' "${1:-}" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$' || die "bad device address '${1:-}'"
+	printf '%s' "$1"
+}
+
+btctl() { bluetoothctl "$@" </dev/null 2>/dev/null; }
+
+bt_address() {
+	if [ ! -s "$ADDR_FILE" ]; then
+		# Locally administered (02:...), stable for this phone.
+		h=$(cat /etc/machine-id /sys/class/net/wlan0/address 2>/dev/null | md5sum | cut -c1-10)
+		printf '02:%s:%s:%s:%s:%s\n' "$(echo "$h" | cut -c1-2)" "$(echo "$h" | cut -c3-4)" \
+			"$(echo "$h" | cut -c5-6)" "$(echo "$h" | cut -c7-8)" "$(echo "$h" | cut -c9-10)" > "$ADDR_FILE"
+	fi
+	cat "$ADDR_FILE"
+}
+
+bt_on() {
+	modprobe -q btqcomsmd 2>/dev/null || true
+	rfkill unblock bluetooth 2>/dev/null || true
+	i=0
+	until [ -e /sys/class/bluetooth/hci0 ]; do
+		i=$((i + 1))
+		[ $i -lt 50 ] || die "no Bluetooth controller (hci0): is the Wi-Fi/BT firmware running?"
+		sleep 0.2
+	done
+	# An unconfigured controller needs its address before it can be used.
+	btmgmt --index 0 public-addr "$(bt_address)" >/dev/null 2>&1 || true
+	svc_up dbus bluetoothd
+	i=0
+	until btctl show | grep -q 'Controller'; do
+		i=$((i + 1))
+		[ $i -lt 50 ] || die "bluetoothd did not start (sv status bluetoothd)"
+		sleep 0.2
+	done
+	btctl power on >/dev/null
+	btctl agent NoInputNoOutput >/dev/null || true
+}
+
+bt_off() {
+	btctl power off >/dev/null || true
+	svc_down bluetoothd
+	rfkill block bluetooth 2>/dev/null || true
+}
+
+bt_status() {
+	if btctl show | grep -q 'Powered: yes'; then echo on; else echo off; fi
+}
+
+bt_scan() {
+	secs=${1:-8}
+	case $secs in '' | *[!0-9]*) die "bad scan time" ;; esac
+	[ "$(bt_status)" = on ] || bt_on
+	btctl --timeout "$secs" scan on >/dev/null || true
+	paired=$(btctl devices Paired | awk '{print $2}')
+	# "Device MAC Name..." -> MAC<TAB>Name<TAB>paired
+	btctl devices | while read -r _ m name; do
+		case $m in ??:??:??:??:??:??) ;; *) continue ;; esac
+		p=0
+		echo "$paired" | grep -qx "$m" && p=1
+		printf '%s\t%s\t%d\n' "$m" "${name:-$m}" "$p"
+	done
+}
+
+bt_connect() {
+	m=$(mac "$1")
+	if ! btctl info "$m" | grep -q 'Paired: yes'; then
+		btctl --timeout 25 pair "$m" | grep -q -e 'Pairing successful' -e 'AlreadyExists' ||
+			die "pairing with $m failed"
+	fi
+	btctl trust "$m" >/dev/null || true
+	btctl --timeout 15 connect "$m" | grep -q 'Connection successful' || die "connecting to $m failed"
+}
+
+case ${1:-}:${2:-} in
+wifi:on)
+	svc_up wpa_supplicant dhcpcd
+	;;
+wifi:off)
+	svc_down dhcpcd wpa_supplicant
+	ip link set wlan0 down 2>/dev/null || true
+	;;
+bt:on) bt_on ;;
+bt:off) bt_off ;;
+bt:status) bt_status ;;
+bt:scan) bt_scan "${3:-8}" ;;
+bt:connect) bt_connect "${3:-}" ;;
+bt:disconnect) btctl disconnect "$(mac "${3:-}")" >/dev/null ;;
+bt:forget) btctl remove "$(mac "${3:-}")" >/dev/null ;;
+*)
+	die "usage: vortex-radio wifi on|off | bt on|off|status|scan [S]|connect MAC|disconnect MAC|forget MAC"
+	;;
+esac

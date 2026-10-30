@@ -136,7 +136,7 @@ make -s -C "$TOP/adbd" CC="$CC" LDFLAGS="-fuse-ld=lld -static -s"
 install -Dm755 "$TOP/adbd/vortex-adbd" "$ROOT/usr/libexec/vortex/vortex-adbd"
 make -s -C "$TOP/adbd" clean
 
-for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync vortex-audio; do
+for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-webview vortex-webview-cage vortex-usb-gadget vortex-timesync vortex-audio vortex-radio; do
 	install -Dm755 "$TOP/runtime/$f" "$ROOT/usr/libexec/vortex/$f"
 done
 install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
@@ -187,11 +187,13 @@ EOF
 SV=$ROOT/etc/runit/runsvdir/default
 mkdir -p "$SV"
 rm -f "$SV"/agetty-*
-for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd audio; do
+for s in vortex-shell seatd wpa_supplicant dhcpcd rmtfs qrtr-ns pd-mapper tqftpserv usb-shell adbd audio dbus bluetoothd; do
 	[ -d "$ROOT/etc/sv/$s" ] && ln -sf "/etc/sv/$s" "$SV/$s"
 done
-# Wi-Fi starts off (vortex-wifi on brings it up): saves ~4 MB and battery.
-touch "$ROOT/etc/sv/wpa_supplicant/down" "$ROOT/etc/sv/dhcpcd/down"
+# Wi-Fi and Bluetooth start off; vortex-radio switches them and remembers it.
+# Saves ~4 MB (Wi-Fi) and ~3 MB (dbus + bluetoothd) and battery.
+touch "$ROOT/etc/sv/wpa_supplicant/down" "$ROOT/etc/sv/dhcpcd/down" \
+	"$ROOT/etc/sv/dbus/down" "$ROOT/etc/sv/bluetoothd/down"
 # Serial console (ttyMSM0, 115200) for development.
 if [ "${VORTEX_SERIAL_GETTY:-0}" = 1 ]; then
 	ln -sf /etc/sv/agetty-ttyMSM0 "$SV/" 2>/dev/null ||

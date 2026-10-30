@@ -32,8 +32,7 @@ on)
 		echo "vortex-wifi: no $IFACE: Wi-Fi firmware not loaded (dmesg | grep -i -e wcn -e pronto)" >&2
 		exit 2
 	}
-	asroot sv up wpa_supplicant
-	asroot sv up dhcpcd
+	asroot /usr/libexec/vortex/vortex-radio wifi on
 	i=0
 	until running; do
 		i=$((i + 1))
@@ -42,8 +41,7 @@ on)
 	done
 	;;
 off)
-	asroot sv down dhcpcd
-	asroot sv down wpa_supplicant
+	asroot /usr/libexec/vortex/vortex-radio wifi off
 	;;
 toggle)
 	if running; then exec "$0" off; else exec "$0" on; fi

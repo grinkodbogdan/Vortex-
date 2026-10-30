@@ -43,6 +43,8 @@ run search     "soft_left ok 7 wait:1000 6 6 6 wait:1000 shot:$OUT/search.ppm ok
 run install    "soft_left down ok ok ok wait:300 shot:$OUT/installing.ppm wait:1200 shot:$OUT/installed.ppm"
 run settings   "soft_right right right shot:$OUT/settings.ppm"
 run sysinfo    "soft_right up up ok shot:$OUT/sysinfo.ppm"
+# Bluetooth devices (fake doas/vortex-radio in tests/fake-bin): paired first
+PATH="$(pwd)/tests/fake-bin:$PATH" run bluetooth "soft_right down down down down down ok wait:600 shot:$OUT/bluetooth.ppm"
 run dialer     "1 2 3 shot:$OUT/dialer.ppm"
 # 12.5 × 4 = 50, then ÷ 0 -> Error
 run calculator "ok right right right right ok 1 2 star 5 left 4 shot:$OUT/calc-op.ppm ok shot:$OUT/calc.ppm right 0 ok shot:$OUT/calc-err.ppm"

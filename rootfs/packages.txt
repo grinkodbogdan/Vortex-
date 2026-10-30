@@ -29,6 +29,7 @@ tzdata
 iproute2
 wpa_supplicant
 dhcpcd
+bluez              # Bluetooth (bluetoothd, bluetoothctl, btmgmt)
 ca-certificates
 curl
 

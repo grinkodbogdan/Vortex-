@@ -12,16 +12,17 @@
 enum screen {
     SCR_HOME, SCR_LAUNCHER,
     SCR_STORE, SCR_STORE_LIST, SCR_STORE_DETAIL,
-    SCR_SETTINGS, SCR_WIFI, SCR_SYSINFO, SCR_DIALER, SCR_CALC,
+    SCR_SETTINGS, SCR_WIFI, SCR_BT, SCR_SYSINFO, SCR_DIALER, SCR_CALC,
     SCR_INPUT, SCR_MENU,
 };
 
 enum job_kind { JOB_NONE, JOB_INSTALL, JOB_REMOVE, JOB_WIFI_SCAN, JOB_WIFI_CONNECT,
-                JOB_WIFI_TOGGLE, JOB_CALL };
+                JOB_WIFI_TOGGLE, JOB_BT_TOGGLE, JOB_BT_SCAN, JOB_BT_CONNECT, JOB_CALL };
 enum menu_kind { MENU_POWER, MENU_APP_OPTIONS, MENU_CONFIRM_REMOVE };
 enum input_kind { INPUT_SEARCH, INPUT_WIFI_PSK };
 
 #define WIFI_MAX 24
+#define BT_MAX 24
 
 struct shell {
     struct vx_config cfg;
@@ -47,6 +48,10 @@ struct shell {
     char wifi_ssid[WIFI_MAX][40];
     int wifi_signal[WIFI_MAX], wifi_secure[WIFI_MAX];
     char wifi_target[40];
+    int bt_sel, bt_n;
+    char bt_mac[BT_MAX][18];
+    char bt_name[BT_MAX][40];
+    int bt_paired[BT_MAX];
     char dial[32];
 
     /* calculator */
@@ -65,6 +70,7 @@ struct shell {
     pid_t job_pid;
     char job_label[48];
     char scan_path[280];
+    char bt_scan_path[280];
 
     pid_t app_pid;                 /* running web app, 0 = none */
     long app_started;              /* when it was launched (ms) */

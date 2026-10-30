@@ -90,6 +90,9 @@ void sys_update(struct vx_sys *s)
         s->wifi_on = flags & 1;
     }
     s->wifi_up = vx_read_int("/sys/class/net/wlan0/carrier", &carrier) == 0 && carrier == 1;
+    /* vortex-radio keeps bluetoothd's runit "down" file in step with the switch */
+    s->bt_on = access("/sys/class/bluetooth/hci0", F_OK) == 0 &&
+               access("/etc/sv/bluetoothd/down", F_OK) != 0;
     s->net_up = s->wifi_up;
     if (!s->net_up) {
         DIR *d = opendir("/sys/class/net");

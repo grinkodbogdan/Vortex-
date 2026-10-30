@@ -551,6 +551,58 @@ static void wifi_connect(const char *ssid, const char *psk)
     start_job(JOB_WIFI_CONNECT, lbl, argv);
 }
 
+/* Bluetooth goes through the root helper (doas allows exactly this). */
+#define RADIO "/usr/libexec/vortex/vortex-radio"
+
+static void bt_scan(void)
+{
+    char *argv[] = { "/bin/sh", "-c", NULL, NULL };
+    char cmd[400];
+    snprintf(cmd, sizeof(cmd), "exec doas " RADIO " bt scan 8 > '%s'", S->bt_scan_path);
+    argv[2] = cmd;
+    S->bt_n = 0;
+    start_job(JOB_BT_SCAN, "Looking for devices\xe2\x80\xa6", argv);
+}
+
+static void bt_load_scan(void)
+{
+    FILE *f = fopen(S->bt_scan_path, "r");
+    char line[160];
+    S->bt_n = 0;
+    S->bt_sel = 0;
+    if (!f)
+        return;
+    /* "MAC<TAB>name<TAB>paired(0/1)" per line; paired devices first */
+    for (int pass = 1; pass >= 0; pass--) {
+        rewind(f);
+        while (S->bt_n < BT_MAX && fgets(line, sizeof(line), f)) {
+            char *t1 = strchr(line, '\t'), *t2;
+            if (!t1)
+                continue;
+            *t1++ = '\0';
+            t2 = strchr(t1, '\t');
+            if (t2)
+                *t2++ = '\0';
+            if ((t2 && atoi(t2) == 1) != pass)
+                continue;
+            vx_strlcpy(S->bt_mac[S->bt_n], line, sizeof(S->bt_mac[0]));
+            vx_strlcpy(S->bt_name[S->bt_n], t1, sizeof(S->bt_name[0]));
+            S->bt_name[S->bt_n][strcspn(S->bt_name[S->bt_n], "\n")] = '\0';
+            S->bt_paired[S->bt_n] = pass;
+            S->bt_n++;
+        }
+    }
+    fclose(f);
+}
+
+static void bt_connect(int i)
+{
+    char *argv[] = { "doas", RADIO, "bt", "connect", S->bt_mac[i], NULL };
+    char lbl[64];
+    snprintf(lbl, sizeof(lbl), "Connecting to %s\xe2\x80\xa6", S->bt_name[i]);
+    start_job(JOB_BT_CONNECT, lbl, argv);
+}
+
 static void dial(void)
 {
     char *argv[] = { S->cfg.call_cmd, "dial", S->dial, NULL };
@@ -625,8 +677,8 @@ static void menu_select(void)
 
 /* ---- settings model -------------------------------------------------- */
 
-enum { SET_BRIGHTNESS, SET_TIMEOUT, SET_WIFI, SET_WIFI_NETS, SET_STORE_REFRESH, SET_SYSINFO,
-       SET_POWER, SET_COUNT };
+enum { SET_BRIGHTNESS, SET_TIMEOUT, SET_WIFI, SET_WIFI_NETS, SET_BT, SET_BT_DEVS,
+       SET_STORE_REFRESH, SET_SYSINFO, SET_POWER, SET_COUNT };
 
 static void settings_value(int i, char *buf, size_t n)
 {
@@ -647,6 +699,9 @@ static void settings_value(int i, char *buf, size_t n)
     case SET_WIFI:
         snprintf(buf, n, "%s", S->sys.wifi_up ? "Connected" : S->sys.wifi_on ? "On" : "Off");
         break;
+    case SET_BT:
+        snprintf(buf, n, "%s", S->sys.bt_on ? "On" : "Off");
+        break;
     default:
         break;
     }
@@ -655,7 +710,8 @@ static void settings_value(int i, char *buf, size_t n)
 static const char *settings_name(int i)
 {
     static const char *const names[SET_COUNT] = {
-        "Brightness", "Screen timeout", "Wi-Fi", "Wi-Fi networks", "Update store list",
+        "Brightness", "Screen timeout", "Wi-Fi", "Wi-Fi networks", "Bluetooth",
+        "Bluetooth devices", "Update store list",
         "System info", "Power",
     };
     return names[i];
@@ -690,6 +746,18 @@ static void settings_activate(void)
     case SET_WIFI_NETS:
         push(SCR_WIFI);
         wifi_scan();
+        break;
+    case SET_BT: {
+        char *bt[] = { "doas", RADIO, "bt", NULL, NULL };
+        sys_update(&S->sys);
+        bt[3] = S->sys.bt_on ? "off" : "on";
+        start_job(JOB_BT_TOGGLE, S->sys.bt_on ? "Turning Bluetooth off\xe2\x80\xa6" :
+                                                "Turning Bluetooth on\xe2\x80\xa6", bt);
+        break;
+    }
+    case SET_BT_DEVS:
+        push(SCR_BT);
+        bt_scan();
         break;
     case SET_STORE_REFRESH:
         if (store_refresh(&S->store) == 0)
@@ -1120,6 +1188,29 @@ static void draw_wifi(void)
     softkeys("Rescan", "Connect", "Back");
 }
 
+static void draw_bt(void)
+{
+    struct nk_rect area = content_rect(1);
+    int rows = (int)(area.h / ROW_H), top = 0;
+    header("Bluetooth", NULL);
+    if (S->job == JOB_BT_SCAN) {
+        softkeys(NULL, NULL, "Back");
+        return;
+    }
+    if (!S->bt_n) {
+        label(nk_rect(0, area.y + 40, area.w, 24), "No devices found", S->fonts.normal, T.dim, AL_CENTER);
+        softkeys("Rescan", NULL, "Back");
+        return;
+    }
+    keep_visible(S->bt_sel, &top, rows, S->bt_n);
+    for (int r = 0; r < rows && top + r < S->bt_n; r++) {
+        int i = top + r;
+        list_row(nk_rect(area.x, area.y + r * ROW_H, area.w, ROW_H), i == S->bt_sel, S->bt_name[i],
+                 NULL, S->bt_paired[i] ? "Paired" : NULL, T.dim);
+    }
+    softkeys("Rescan", "Connect", "Back");
+}
+
 static void draw_sysinfo(void)
 {
     struct nk_rect area = content_rect(1);
@@ -1398,6 +1489,7 @@ static void draw_screen(enum screen scr)
     case SCR_STORE_DETAIL: draw_store_detail(); break;
     case SCR_SETTINGS: draw_settings(); break;
     case SCR_WIFI: draw_wifi(); break;
+    case SCR_BT: draw_bt(); break;
     case SCR_SYSINFO: draw_sysinfo(); break;
     case SCR_DIALER: draw_dialer(); break;
     case SCR_CALC: draw_calc(); break;
@@ -1589,6 +1681,22 @@ static void key_settings(enum vx_key k)
     }
 }
 
+static void key_bt(enum vx_key k)
+{
+    switch (k) {
+    case VK_UP: move(&S->bt_sel, S->bt_n, -1); break;
+    case VK_DOWN: move(&S->bt_sel, S->bt_n, 1); break;
+    case VK_SOFT_LEFT: bt_scan(); break;
+    case VK_OK:
+        if (S->bt_n && S->job == JOB_NONE)
+            bt_connect(S->bt_sel);
+        break;
+    case VK_BACK:
+    case VK_SOFT_RIGHT: pop(); break;
+    default: break;
+    }
+}
+
 static void key_wifi(enum vx_key k)
 {
     switch (k) {
@@ -1743,6 +1851,7 @@ int shell_key(struct shell *sh, const struct vx_event *ev)
     case SCR_STORE_DETAIL: key_store_detail(ev->key); break;
     case SCR_SETTINGS: key_settings(ev->key); break;
     case SCR_WIFI: key_wifi(ev->key); break;
+    case SCR_BT: key_bt(ev->key); break;
     case SCR_SYSINFO:
         if (ev->key == VK_BACK || ev->key == VK_SOFT_RIGHT)
             pop();
@@ -1793,6 +1902,25 @@ static void job_done(int code)
             push(SCR_WIFI);
             wifi_scan();
         }
+        break;
+    case JOB_BT_TOGGLE:
+        sys_update(&S->sys);
+        if (code != 0) {
+            toast("Could not switch Bluetooth");
+        } else if (S->sys.bt_on) {
+            push(SCR_BT);
+            bt_scan();
+        }
+        break;
+    case JOB_BT_SCAN:
+        bt_load_scan();
+        if (code != 0)
+            toast("Bluetooth scan failed");
+        break;
+    case JOB_BT_CONNECT:
+        toast(code == 0 ? "Connected" : "Could not connect");
+        if (code == 0 && !S->bt_paired[S->bt_sel])
+            bt_scan();  /* show it as paired */
         break;
     case JOB_CALL:
         if (code != 0) {
@@ -1952,6 +2080,7 @@ int shell_init(struct shell *sh, struct vx_surface *surf, const char *config_pat
     apps_scan(&sh->apps, sh->cfg.apps_dir);
     store_init(&sh->store, sh->cfg.cache_dir, sh->cfg.store_url);
     snprintf(sh->scan_path, sizeof(sh->scan_path), "%s/wifi-scan.txt", sh->cfg.cache_dir);
+    snprintf(sh->bt_scan_path, sizeof(sh->bt_scan_path), "%s/bt-scan.txt", sh->cfg.cache_dir);
     sys_update(&sh->sys);
     sh->brightness = sys_backlight_init(sh->cfg.backlight) == 0 ? sys_backlight_get() : -1;
     if (sh->brightness == 0)
