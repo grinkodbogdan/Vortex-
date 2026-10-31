@@ -1691,9 +1691,8 @@ static void modem_poll(void)
     struct stat st;
     char path[300];
 
-    if (S->modem_seen && S->now - S->modem_polled < 700)
-        return;
-    S->modem_polled = S->now;
+    /* no throttle: vortex-modem's SIGUSR1 must never be missed, and the
+     * shell only ticks on events and timers anyway */
 
     n = read_fields("modem", line, sizeof(line), f, 3);
     if (n >= 1) {
@@ -3440,8 +3439,9 @@ int shell_tick(struct shell *sh)
 int shell_timeout(const struct shell *sh)
 {
     long ms_to_minute;
+    /* an app or a video ending wakes us (SIGCHLD); keys arrive as events */
     if (sh->app_pid || (sh->tube.p.pid > 0 && sh->tube.p.video))
-        return 250;
+        return 1000;
     if (sh->tube.fetch_pid > 0 || sh->tube.thumbs_pid > 0)
         return 150;
     if (sh->tube.p.pid > 0)  /* read mpv's news; redraw the time */
@@ -3459,8 +3459,10 @@ int shell_timeout(const struct shell *sh)
     if (sh->blanked)
         return 60000;
     ms_to_minute = 60000 - (long)(time(NULL) % 60) * 1000;
-    if (sh->modem_seen && ms_to_minute > 1000)
-        ms_to_minute = 1000;  /* notice incoming calls and messages */
+    /* vortex-modem signals a call or a message (SIGUSR1); this is only
+     * the safety net */
+    if (sh->modem_seen && ms_to_minute > 30000)
+        ms_to_minute = 30000;
     if (sh->cfg.screen_timeout > 0) {
         long blank_in = sh->cfg.screen_timeout * 1000L - (sh->now - sh->last_input);
         if (blank_in < ms_to_minute)

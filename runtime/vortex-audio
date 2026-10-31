@@ -114,7 +114,15 @@ setup)
 			[ $waited -eq 20 ] && log "waiting for the sound card (it appears once the modem runs)"
 		fi
 		route_output
-		sleep 3
+		# Bluetooth headphones are only looked for while Bluetooth is on;
+		# otherwise wake rarely (every wake-up costs battery)
+		if [ $up = 0 ]; then
+			sleep 3
+		elif sv status bluetoothd 2>/dev/null | grep -q '^run:'; then
+			sleep 5
+		else
+			sleep 30
+		fi
 	done
 	;;
 volume)

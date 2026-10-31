@@ -51,6 +51,14 @@ static void on_quit_signal(int sig)
     quit_requested = 1;
 }
 
+/* SIGUSR1 (vortex-modem: a call or a message) and SIGCHLD (an app or
+ * helper ended) only cut the wait short, so the shell can sleep for long
+ * stretches instead of polling. */
+static void on_wake_signal(int sig)
+{
+    (void)sig;
+}
+
 static int has_keys(int fd)
 {
     unsigned long evbits = 0;
@@ -145,6 +153,9 @@ int plat_init(const struct vx_plat_opts *opts, struct vx_surface *out)
     sa.sa_handler = on_quit_signal;
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
+    sa.sa_handler = on_wake_signal;  /* no SA_RESTART: poll() returns */
+    sigaction(SIGUSR1, &sa, NULL);
+    sigaction(SIGCHLD, &sa, NULL);
 
     *out = P.surf;
     return 0;
@@ -234,8 +245,8 @@ int plat_wait_event(struct vx_event *ev, int timeout_ms)
         r = poll(P.in, (nfds_t)P.n_in, left);
         if (r == 0)
             return 0;
-        if (r < 0 && errno != EINTR)
-            return 0;
+        if (r < 0)
+            return 0;   /* EINTR: a wake-up signal; the caller re-checks */
     }
 }
 

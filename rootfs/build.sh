@@ -145,6 +145,7 @@ for f in vortex-kai-install vortex-kai-remove vortex-kai-run vortex-call vortex-
 done
 install -Dm755 "$TOP/runtime/vortex-wifi" "$ROOT/usr/bin/vortex-wifi"
 install -Dm755 "$TOP/runtime/vortex-power" "$ROOT/usr/bin/vortex-power"
+install -Dm755 "$TOP/runtime/vortex-power-report" "$ROOT/usr/bin/vortex-power-report"
 install -Dm644 "$TOP/runtime/kaios-shim.js" "$ROOT/usr/share/vortex/kaios-shim.js"
 install -Dm644 "$TOP/assets/fonts/Roboto-Regular.ttf" "$ROOT/usr/share/vortex/fonts/Roboto-Regular.ttf"
 # root-owned, whoever checked the tree out (doas refuses a doas.conf that

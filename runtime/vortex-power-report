@@ -1,0 +1,137 @@
+#!/bin/sh
+# Where does the battery go?  Samples the phone for a while and reports
+# what kept it busy: CPU time per process, interrupts, how deep the CPUs
+# slept, the CPU clock, the battery voltage and what was switched on.
+#
+#   vortex-power-report [MINUTES]       measure (default 10), print the report
+#   vortex-power-report -b [MINUTES]    the same in the background, so the USB
+#                                       cable can be pulled (charging hides the
+#                                       battery drain); the report goes to
+#                                       /var/log/vortex-power/LATEST.txt
+#
+# Run as root (adb shell).  The battery gauge only measures voltage, so the
+# drain is given in mV/hour: on this battery ~100 mV is very roughly 15-25 %
+# in the middle of the range.
+set -u
+OUT_DIR=/var/log/vortex-power
+
+if [ "${1:-}" = -b ]; then
+	shift
+	mkdir -p "$OUT_DIR"
+	f=$OUT_DIR/$(date +%Y%m%d-%H%M%S).txt
+	setsid "$0" "${1:-10}" > "$f" 2>&1 < /dev/null &
+	ln -sf "$f" "$OUT_DIR/LATEST.txt"
+	echo "measuring for ${1:-10} min in the background: unplug USB now, leave the phone alone"
+	echo "afterwards: cat $OUT_DIR/LATEST.txt"
+	exit 0
+fi
+
+MIN=${1:-10}
+case $MIN in '' | *[!0-9]*) echo "usage: vortex-power-report [-b] [MINUTES]" >&2; exit 2 ;; esac
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+
+bat=$(for d in /sys/class/power_supply/*; do [ "$(cat "$d/type" 2>/dev/null)" = Battery ] && echo "$d" && break; done)
+chg=$(for d in /sys/class/power_supply/*; do [ "$(cat "$d/type" 2>/dev/null)" = USB ] && echo "$d" && break; done)
+rd() { cat "$1" 2>/dev/null || echo "?"; }
+milli() { v=$(rd "$1" | tr -cd 0-9); echo $((${v:-0} / 1000)); } # µV/µA -> mV/mA
+
+snap() { # DIR
+	d=$1
+	mkdir -p "$d"
+	# CPU time (clock ticks) per process: pid comm utime+stime
+	for s in /proc/[0-9]*/stat; do
+		read -r l < "$s" 2>/dev/null || continue
+		pid=${l%% *}
+		rest=${l#*) }
+		comm=${l#*(}
+		comm=${comm%%)*}
+		# shellcheck disable=SC2086
+		set -- $rest
+		echo "$pid $(echo "$comm" | tr ' ' _) $((${12} + ${13}))"
+	done > "$d/procs"
+	awk 'NR > 1 { s = 0; for (i = 2; i <= NF && $i ~ /^[0-9]+$/; i++) s += $i;
+		$1 = $1; name = ""; for (j = i; j <= NF; j++) name = name " " $j; print $1, s, name }' \
+		/proc/interrupts > "$d/irqs"
+	for c in /sys/devices/system/cpu/cpu[0-9]*; do
+		for st in "$c"/cpuidle/state*; do
+			[ -d "$st" ] && echo "${c##*/} $(cat "$st/name") $(cat "$st/time") $(cat "$st/usage")"
+		done
+	done > "$d/idle"
+	awk '/^cpu / {print $2 + $3 + $4 + $7 + $8, $5 + $6}' /proc/stat > "$d/cpu"
+	rd "$bat/voltage_now" > "$d/uv"
+	rd "$bat/capacity" > "$d/cap"
+	date +%s > "$d/t"
+}
+
+echo "Vortex power report: ${MIN} min from $(date)"
+echo
+echo "== what is on"
+echo "uptime/load:   $(cat /proc/loadavg)"
+echo "battery:       $(rd "$bat/capacity") %  $(milli "$bat/voltage_now") mV  ($(rd "$bat/status"))"
+[ -n "$chg" ] && echo "charger:       online=$(rd "$chg/online")  limit=$(milli "$chg/constant_charge_current_max") mA"
+for b in /sys/class/backlight/*; do
+	[ -e "$b" ] && echo "backlight:     $(rd "$b/brightness")/$(rd "$b/max_brightness") (${b##*/})"
+done
+echo "wifi:          $(cat /sys/class/net/wlan0/operstate 2>/dev/null || echo off)  $(iw dev wlan0 get power_save 2>/dev/null)"
+echo "bluetooth:     $(if [ -e /sys/class/bluetooth/hci0 ]; then echo on; else echo off; fi)"
+echo "modem:         $(cut -f1,2,3 /run/vortex/modem 2>/dev/null | tr '\t' ' ')"
+echo "usb gadget:    $(cat /sys/class/udc/*/state 2>/dev/null)"
+for l in /sys/class/leds/*; do
+	[ -e "$l" ] && [ "$(cat "$l/brightness")" != 0 ] && echo "LED on:        ${l##*/} = $(cat "$l/brightness")"
+done
+if [ -d /sys/devices/system/cpu/cpufreq/policy0 ]; then
+	p=/sys/devices/system/cpu/cpufreq/policy0
+	echo "cpufreq:       $(rd $p/scaling_governor), $(milli $p/scaling_cur_freq) MHz ($(rd $p/scaling_available_frequencies))"
+else
+	echo "cpufreq:       NONE - the CPUs run at a fixed clock all the time"
+fi
+mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
+if [ -r /sys/kernel/debug/clk/clk_summary ]; then
+	echo "CPU clocks (debugfs):"
+	grep -E -i 'a7pll|a53pll|apcs|gpll0 ' /sys/kernel/debug/clk/clk_summary | awk '{printf "  %-24s enable=%s rate=%d MHz\n", $1, $2, $4 / 1000000}'
+fi
+if [ -r /sys/kernel/debug/regulator/regulator_summary ]; then
+	echo "regulators that are on:"
+	awk 'NR > 2 && $2 > 0 {printf "  %s", $1} END {print ""}' /sys/kernel/debug/regulator/regulator_summary
+fi
+echo
+
+snap "$T/a"
+sleep $((MIN * 60))
+snap "$T/b"
+secs=$(( $(cat "$T/b/t") - $(cat "$T/a/t") ))
+[ "$secs" -gt 0 ] || secs=1
+hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+
+echo "== battery over ${secs} s"
+uva=$(tr -cd 0-9 < "$T/a/uv"); uvb=$(tr -cd 0-9 < "$T/b/uv")
+if [ -n "$uva" ] && [ -n "$uvb" ]; then
+	echo "voltage:  $((uva / 1000)) -> $((uvb / 1000)) mV   ($(( (uva - uvb) * 3600 / secs / 1000 )) mV per hour)"
+fi
+echo "gauge:    $(cat "$T/a/cap") -> $(cat "$T/b/cap") %"
+[ -n "$chg" ] && [ "$(rd "$chg/online")" = 1 ] && echo "(USB was plugged in: the battery was charging, use -b and unplug)"
+echo
+
+echo "== CPU"
+# shellcheck disable=SC2046
+set -- $(cat "$T/a/cpu") $(cat "$T/b/cpu")
+busy=$(($3 - $1)); idle=$(($4 - $2))
+echo "busy: $(( busy * 100 / (busy + idle + 1) )) % of all cores"
+echo "sleep states (share of the time, per core):"
+awk -v secs="$secs" 'NR == FNR { t[$1" "$2] = $3; u[$1" "$2] = $4; next }
+	{ k = $1" "$2; printf "  %s %-28s %3d %%  %6d entries\n", $1, $2, ($3 - t[k]) / 10000 / secs, $4 - u[k] }' \
+	"$T/a/idle" "$T/b/idle"
+[ -s "$T/a/idle" ] || echo "  NONE - no cpuidle: the cores never power down between tasks"
+echo
+
+echo "== who used the CPU (seconds of CPU time)"
+awk -v hz="$hz" 'NR == FNR { a[$1] = $3; next }
+	{ d = $3 - (($1 in a) ? a[$1] : 0); if (d > 0) printf "%8.2f  %s (pid %s)\n", d / hz, $2, $1 }' \
+	"$T/a/procs" "$T/b/procs" | sort -rn | head -12
+echo
+
+echo "== wake-ups: interrupts per second"
+awk -v secs="$secs" 'NR == FNR { a[$1] = $2; next }
+	{ d = $2 - a[$1]; if (d > 0) { $2 = ""; printf "%8.1f  %s\n", d / secs, $0 } }' \
+	"$T/a/irqs" "$T/b/irqs" | sort -rn | head -12

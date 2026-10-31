@@ -668,7 +668,8 @@ static void *usb_reader(void *unused)
         if (usb_read_exact(buf, sizeof(m)) < 0) {
             if (errors++ == 0)
                 logf_("USB read failed: %s", strerror(errno));
-            usleep(100000);  /* not enabled / cable out */
+            /* not enabled / cable out: back off, the phone is idle */
+            usleep(errors < 20 ? 100000 : 2000000);
             continue;
         }
         errors = 0;

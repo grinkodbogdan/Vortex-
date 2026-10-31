@@ -327,3 +327,13 @@
 		bias-disable;
 	};
 };
+
+/*
+ * Charge at the current Nokia's own firmware uses (msm-pm8909.dtsi in the
+ * leo kernel: qcom,ibatsafe-ma = <550>) instead of postmarketOS' cautious
+ * 270 mA, which a busy phone (video, Wi-Fi) uses up by itself: it then
+ * discharges while plugged in.
+ */
+&pm8909_charger {
+	qcom,fast-charge-safe-current = <550000>;
+};

@@ -72,7 +72,6 @@ struct shell {
 
     /* modem: /run/vortex/{modem,call,sms-new}, written by vortex-modem */
     int modem_seen;                /* the files exist: poll them */
-    long modem_polled;
     char modem_state[16], modem_op[24];
     int modem_signal;
     char call_state[16], call_number[32];
