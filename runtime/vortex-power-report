@@ -44,24 +44,30 @@ T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 
 bat=$(for d in /sys/class/power_supply/*; do [ "$(cat "$d/type" 2>/dev/null)" = Battery ] && echo "$d" && break; done)
-chg=$(for d in /sys/class/power_supply/*; do [ "$(cat "$d/type" 2>/dev/null)" = USB ] && echo "$d" && break; done)
+chg=$(for d in /sys/class/power_supply/*; do [ -e "$d/constant_charge_current_max" ] && echo "$d" && break; done)
+[ -n "$chg" ] || chg=$(for d in /sys/class/power_supply/*; do [ "$(cat "$d/type" 2>/dev/null)" = USB ] && echo "$d" && break; done)
 rd() { cat "$1" 2>/dev/null || echo "?"; }
 milli() { v=$(rd "$1" | tr -cd 0-9); echo $((${v:-0} / 1000)); } # µV/µA -> mV/mA
 
 snap() { # DIR
 	d=$1
 	mkdir -p "$d"
-	# CPU time (clock ticks) per process: pid comm utime+stime
-	for s in /proc/[0-9]*/stat; do
-		read -r l < "$s" 2>/dev/null || continue
-		pid=${l%% *}
-		rest=${l#*) }
-		comm=${l#*(}
-		comm=${comm%%)*}
-		# shellcheck disable=SC2086
-		set -- $rest
-		echo "$pid $(echo "$comm" | tr ' ' _) $((${12} + ${13}))"
-	done > "$d/procs"
+	# CPU time (clock ticks) per process: pid comm utime+stime.  One cat:
+	# processes come and go while we read, and a vanished one is skipped.
+	cat /proc/[0-9]*/stat 2>/dev/null | awk '{
+		o = index($0, "("); c = 0
+		for (i = length($0); i > o; i--) if (substr($0, i, 1) == ")") { c = i; break }
+		if (!o || !c) next
+		comm = substr($0, o + 1, c - o - 1); gsub(/ /, "_", comm)
+		n = split(substr($0, c + 2), f, " ")
+		if (n >= 13) print $1, comm, f[12] + f[13]
+	}' > "$d/procs"
+	# processes that are running or stuck right now ("load" counts both)
+	cat /proc/[0-9]*/stat 2>/dev/null | awk '{
+		c = 0; for (i = length($0); i > 0; i--) if (substr($0, i, 1) == ")") { c = i; break }
+		st = substr($0, c + 2, 1)
+		if (st == "R" || st == "D") print st, $1, substr($0, index($0, "(") + 1, c - index($0, "(") - 1)
+	}' > "$d/states"
 	awk 'NR > 1 { s = 0; for (i = 2; i <= NF && $i ~ /^[0-9]+$/; i++) s += $i;
 		$1 = $1; name = ""; for (j = i; j <= NF; j++) name = name " " $j; print $1, s, name }' \
 		/proc/interrupts > "$d/irqs"
@@ -71,6 +77,7 @@ snap() { # DIR
 		done
 	done > "$d/idle"
 	awk '/^cpu / {print $2 + $3 + $4 + $7 + $8, $5 + $6}' /proc/stat > "$d/cpu"
+	cat /sys/devices/system/cpu/cpufreq/policy0/stats/time_in_state > "$d/freq" 2>/dev/null
 	rd "$bat/voltage_now" > "$d/uv"
 	rd "$bat/capacity" > "$d/cap"
 	date +%s > "$d/t"
@@ -101,7 +108,7 @@ fi
 mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
 if [ -r /sys/kernel/debug/clk/clk_summary ]; then
 	echo "CPU clocks (debugfs):"
-	grep -E -i 'a7pll|a53pll|apcs|gpll0 ' /sys/kernel/debug/clk/clk_summary | awk '{printf "  %-24s enable=%s rate=%d MHz\n", $1, $2, $4 / 1000000}'
+	grep -E -i 'a7pll|a53pll|a53mux|apcs|gpll0 ' /sys/kernel/debug/clk/clk_summary | awk '{printf "  %-24s enable=%s rate=%.1f MHz\n", $1, $2, $5 / 1000000}'
 fi
 if [ -r /sys/kernel/debug/regulator/regulator_summary ]; then
 	echo "regulators that are on:"
@@ -143,6 +150,16 @@ awk -v secs="$secs" 'NR == FNR { t[$1" "$2] = $3; u[$1" "$2] = $4; next }
 	{ k = $1" "$2; printf "  %s %-28s %3d %%  %6d entries\n", $1, $2, ($3 - t[k]) / 10000 / secs, $4 - u[k] }' \
 	"$T/a/idle" "$T/b/idle"
 [ -s "$T/a/idle" ] || echo "  NONE - no cpuidle: the cores never power down between tasks"
+if [ -s "$T/a/freq" ]; then
+	echo "time at each CPU speed:"
+	awk 'NR == FNR { a[$1] = $2; next } { d[$1] = $2 - a[$1]; t += d[$1] }
+		END { for (f in d) printf "  %4d MHz %3d %%\n", f / 1000, t ? d[f] * 100 / t : 0 }' \
+		"$T/a/freq" "$T/b/freq" | sort -n
+fi
+echo
+
+echo "== running (R) or stuck (D) at the end -- the load average counts both"
+cat "$T/b/states"
 echo
 
 echo "== who used the CPU (seconds of CPU time)"

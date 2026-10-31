@@ -337,3 +337,49 @@
 &pm8909_charger {
 	qcom,fast-charge-safe-current = <550000>;
 };
+
+/*
+ * CPU frequency scaling.  Linux 6.6 has no MSM8909 support in
+ * qcom-cpufreq-nvmem (it came in 6.7, together with voting the CPU voltage
+ * through the RPM), so the generic cpufreq-dt driver runs this table.  Only
+ * the speeds made from GPLL0 are listed: that is where the bootloader leaves
+ * the CPUs (the A7 PLL is off) and the voltage is set for, so nothing here
+ * runs faster than before; the CPUs just slow down when there is little to
+ * do.  The values are upstream's (GPLL0 is 799999804 Hz, not 800 MHz).
+ * 998 MHz and up need the A7 PLL and a higher voltage: not without 6.7.
+ */
+/ {
+	cpu_opp_table: opp-table-cpu {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-199999951 {
+			opp-hz = /bits/ 64 <199999951>;
+		};
+		opp-399999902 {
+			opp-hz = /bits/ 64 <399999902>;
+		};
+		opp-533333202 {
+			opp-hz = /bits/ 64 <533333202>;
+		};
+		opp-799999804 {
+			opp-hz = /bits/ 64 <799999804>;
+		};
+	};
+};
+
+&cpu0 {
+	operating-points-v2 = <&cpu_opp_table>;
+};
+
+&cpu1 {
+	operating-points-v2 = <&cpu_opp_table>;
+};
+
+&cpu2 {
+	operating-points-v2 = <&cpu_opp_table>;
+};
+
+&cpu3 {
+	operating-points-v2 = <&cpu_opp_table>;
+};
