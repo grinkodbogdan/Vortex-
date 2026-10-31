@@ -1,0 +1,4 @@
+#!/bin/sh
+# Battery log and clean power-off when empty (runtime/vortex-battery).
+exec 2>&1
+exec /usr/libexec/vortex/vortex-battery

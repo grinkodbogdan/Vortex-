@@ -119,11 +119,15 @@ dialer.
   Logs: `cat /var/log/vortex-shell/current` (the helper's messages);
   `/usr/libexec/vortex/vortex-tube popular /tmp/p.tsv` tests a server.
 * **Battery:** the gauge (pm8916-bms-vm) only measures the voltage, and the
-  voltage sags under load, so the percentage drops fast while the phone is
-  busy and partly comes back at rest. To see where the power goes, run
-  `vortex-power-report -b 20` over adb, unplug the cable, leave the phone
-  alone (screen off) for 20 minutes, plug it back in and run
-  `cat /var/log/vortex-power/LATEST.txt`; once more while a video plays.
+  voltage sags under load and rises while charging, so the percentage
+  drops fast while the phone is busy and reads too high just after
+  charging.  The voltage is what counts: the "battery" service logs it every
+  2 minutes to `/var/log/vortex-power/battery.log` (kept even if the battery
+  runs out) and powers the phone off cleanly below 3.40 V.  To see where
+  the power goes, run `vortex-power-report -b 20` over adb, unplug the
+  cable, leave the phone alone (screen off) for 20 minutes, plug it back in
+  and run `cat /var/log/vortex-power/LATEST.txt`; once more while a video
+  plays.
 * **Camera:** not supported (no MSM8909 camera driver in Linux).
 * **Bluetooth:** Settings → Bluetooth switches it, Bluetooth devices scans and
   connects (OK on a device pairs and connects it). From a shell:

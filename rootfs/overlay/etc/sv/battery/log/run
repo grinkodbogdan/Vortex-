@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -d /var/log/battery ] || mkdir -p /var/log/battery
+printf 's16384\nn2\n' > /var/log/battery/config
+exec svlogd -tt /var/log/battery

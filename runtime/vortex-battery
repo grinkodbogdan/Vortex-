@@ -1,0 +1,61 @@
+#!/bin/sh
+# The "battery" service (root): a battery log and a clean power-off.
+#
+# - Every 2 minutes appends "time mV gauge% charger backlight" to
+#   /var/log/vortex-power/battery.log, synced to flash, so it survives the
+#   battery running out: it shows afterwards how fast it went down.
+# - When the battery is nearly empty (below 3.40 V twice in a row, no
+#   charger) it powers the phone off cleanly instead of letting it brown out
+#   (dim screen, frozen, files half written).
+#
+# The kernel's percentage comes from the voltage alone (pm8916-bms-vm) and
+# is not trustworthy, so this goes by the voltage.
+set -u
+LOG_DIR=${VORTEX_POWER_LOG_DIR:-/var/log/vortex-power}
+PS=${VORTEX_POWER_SUPPLY_DIR:-/sys/class/power_supply}
+POWEROFF=${VORTEX_POWEROFF:-poweroff}
+LOG=$LOG_DIR/battery.log
+EMPTY_MV=${VORTEX_BATTERY_EMPTY_MV:-3400}
+
+bat='' chg=''
+for d in "$PS"/*; do
+	case $(cat "$d/type" 2>/dev/null) in
+	Battery) [ -z "$bat" ] && bat=$d ;;
+	USB | Mains) [ -z "$chg" ] && chg=$d ;;
+	esac
+done
+[ -n "$bat" ] || { echo "vortex-battery: no battery found"; exec sleep 2147483647; }
+
+mvolt() { v=$(cat "$bat/voltage_now" 2>/dev/null | tr -cd 0-9); echo $((${v:-0} / 1000)); }
+online() { [ -n "$chg" ] && [ "$(cat "$chg/online" 2>/dev/null)" = 1 ]; }
+
+mkdir -p "$LOG_DIR"
+echo "$(date '+%F %T') boot  $(mvolt) mV  gauge $(cat "$bat/capacity" 2>/dev/null)%" >> "$LOG"
+low=0 logged=0
+while :; do
+	v=$(mvolt)
+	if ! online && [ "$v" -gt 0 ] && [ "$v" -lt "$EMPTY_MV" ]; then
+		low=$((low + 1))
+	else
+		low=0
+	fi
+	if [ $low -ge 2 ]; then
+		echo "$(date '+%F %T') EMPTY $v mV: powering off" | tee -a "$LOG"
+		echo "vortex-battery: battery empty ($v mV), powering off" > /dev/kmsg 2>/dev/null
+		sync
+		exec $POWEROFF
+	fi
+	now=$(date +%s)
+	if [ $((now - logged)) -ge 120 ]; then
+		logged=$now
+		bl=$(cat /sys/class/backlight/*/brightness 2>/dev/null | head -n 1)
+		echo "$(date '+%F %T') $v mV  gauge $(cat "$bat/capacity" 2>/dev/null)%  charger $(online && echo on || echo off)  backlight ${bl:-?}" >> "$LOG"
+		# keep the last ~3000 lines
+		if [ "$(wc -l < "$LOG")" -gt 4000 ]; then
+			tail -n 3000 "$LOG" > "$LOG.new" && mv "$LOG.new" "$LOG"
+		fi
+		sync "$LOG" 2>/dev/null || sync
+	fi
+	# every wake-up costs a little: look often only when it gets close
+	if [ "$v" -lt $((EMPTY_MV + 150)) ]; then sleep 20; else sleep 60; fi
+done
