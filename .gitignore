@@ -9,3 +9,4 @@ node_modules/
 downloads/
 shell/vortex-splash
 adbd/vortex-adbd
+__pycache__/
